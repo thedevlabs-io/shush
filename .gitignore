@@ -1,3 +1,8 @@
 node_modules/
 dist/
 *.vsix
+
+# Local test artifacts (dotenv files used to exercise the extension)
+.env
+.env.*
+*.env
