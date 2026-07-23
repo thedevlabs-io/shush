@@ -1,10 +1,22 @@
 {
-  "name": "block-env-expose",
-  "displayName": "Block .env Expose",
-  "description": "Hides .env files behind a confirmation gate so they don't flash on screen during calls or screen shares.",
-  "version": "0.1.0",
-  "publisher": "akhshy",
+  "name": "shush",
+  "displayName": "Shush",
+  "description": "Opens .env, .dev.vars, and JSON config files with their values redacted, so secrets never flash on screen during calls or screen shares.",
+  "version": "0.2.0",
+  "publisher": "thedevlabs-io",
+  "author": {
+    "name": "thedevlabs-io"
+  },
+  "license": "MIT",
   "icon": "media/icon.png",
+  "homepage": "https://github.com/thedevlabs-io/shush",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thedevlabs-io/shush.git"
+  },
+  "bugs": {
+    "url": "https://github.com/thedevlabs-io/shush/issues"
+  },
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -16,23 +28,58 @@
     "secrets",
     "privacy",
     "screen share",
-    "dotenv"
+    "dotenv",
+    "redact",
+    "cloudflare",
+    "firebase"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "customEditors": [
       {
-        "viewType": "blockEnvExpose.redactedEditor",
-        "displayName": "Redacted .env",
+        "viewType": "shush.redactedEditor",
+        "displayName": "Redacted (Shush)",
         "selector": [
           { "filenamePattern": "**/.env" },
           { "filenamePattern": "**/.env.*" },
-          { "filenamePattern": "**/*.env" }
+          { "filenamePattern": "**/*.env" },
+          { "filenamePattern": "**/.dev.vars" },
+          { "filenamePattern": "**/.dev.vars.*" }
         ],
         "priority": "default"
       }
-    ]
+    ],
+    "commands": [
+      {
+        "command": "shush.protectActiveFile",
+        "title": "Shush: Protect this file (add to .shushrc.json)"
+      },
+      {
+        "command": "shush.openConfig",
+        "title": "Shush: Open project config (.shushrc.json)"
+      },
+      {
+        "command": "shush.openAsText",
+        "title": "Shush: Open active file as plain text"
+      }
+    ],
+    "configuration": {
+      "title": "Shush",
+      "properties": {
+        "shush.patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "scope": "resource",
+          "description": "Additional glob patterns to redact, on top of the built-in .env / .dev.vars patterns. Committing these to .shushrc.json shares them with your team."
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "npm run build",

@@ -1,19 +1,45 @@
-// ABOUTME: A CustomTextEditor that renders .env files with values masked by default,
-// ABOUTME: so secrets never render on screen until the user explicitly reveals them.
+// ABOUTME: A CustomTextEditor that renders secret files with values masked by default.
+// ABOUTME: Handles env (KEY=VALUE) files and JSON files (key-aware leaf redaction).
 
 import * as vscode from "vscode";
 
+type Format = "env" | "json";
+
+/** A single revealable row shown in the webview. */
 interface Row {
-  /** 0-based line number in the document. */
+  /** Stable id used to route edits back: "L<line>" for env, a JSON path for json. */
+  id: string;
+  key: string;
+  value: string;
+}
+
+interface Parsed {
+  format: Format;
+  rows: Row[];
+  /** Set when a JSON file could not be parsed; contents are shown as one masked block. */
+  note?: string;
+}
+
+function detectFormat(document: vscode.TextDocument): Format {
+  if (document.languageId === "json" || document.languageId === "jsonc") {
+    return "json";
+  }
+  if (document.uri.path.toLowerCase().endsWith(".json")) {
+    return "json";
+  }
+  return "env";
+}
+
+// ---- env parsing ---------------------------------------------------------
+
+interface EnvLine {
   line: number;
   key: string;
-  /** Everything between key and value, e.g. " = " or "=". */
   sep: string;
   value: string;
 }
 
-/** Parse a line into a key/value row, or return null for comments/blanks. */
-function parseLine(text: string, line: number): Row | null {
+function parseEnvLine(text: string, line: number): EnvLine | null {
   if (/^\s*(#.*)?$/.test(text)) {
     return null; // blank or comment
   }
@@ -24,25 +50,69 @@ function parseLine(text: string, line: number): Row | null {
   return { line, key: m[1], sep: m[2], value: m[3] };
 }
 
-function nonce(): string {
-  let s = "";
-  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-  for (let i = 0; i < 32; i++) {
-    s += chars.charAt(Math.floor(Math.random() * chars.length));
+// ---- json parsing --------------------------------------------------------
+
+/** Flatten a JSON value into leaf rows keyed by dotted/bracketed path. */
+function flattenJson(value: unknown, prefix: string, out: Row[]): void {
+  if (value !== null && typeof value === "object") {
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => flattenJson(v, `${prefix}[${i}]`, out));
+    } else {
+      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        flattenJson(v, prefix ? `${prefix}.${k}` : k, out);
+      }
+    }
+    return;
   }
-  return s;
+  out.push({ id: prefix, key: prefix, value: value === null ? "null" : String(value) });
 }
 
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
+/** Tokenize a flattened path ("a.b[0].c") into keys/indices. */
+function pathTokens(path: string): (string | number)[] {
+  const tokens: (string | number)[] = [];
+  for (const part of path.split(".")) {
+    const m = /^([^[\]]*)((\[\d+\])*)$/.exec(part);
+    if (!m) {
+      tokens.push(part);
+      continue;
+    }
+    if (m[1]) {
+      tokens.push(m[1]);
+    }
+    const idx = m[2].match(/\d+/g);
+    if (idx) {
+      idx.forEach((n) => tokens.push(Number(n)));
+    }
+  }
+  return tokens;
 }
+
+/** Coerce a user-entered string back to the type of the value it replaces. */
+function coerce(previous: unknown, next: string): unknown {
+  if (typeof previous === "number" && next.trim() !== "" && !isNaN(Number(next))) {
+    return Number(next);
+  }
+  if (typeof previous === "boolean" && (next === "true" || next === "false")) {
+    return next === "true";
+  }
+  if (previous === null && next === "null") {
+    return null;
+  }
+  return next;
+}
+
+function detectIndent(text: string): number | string {
+  const m = /^(\t+|[ ]+)\S/m.exec(text);
+  if (m) {
+    return m[1][0] === "\t" ? "\t" : m[1].length;
+  }
+  return 2;
+}
+
+// ---- provider ------------------------------------------------------------
 
 export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvider {
-  public static readonly viewType = "blockEnvExpose.redactedEditor";
+  public static readonly viewType = "shush.redactedEditor";
 
   public static register(context: vscode.ExtensionContext): vscode.Disposable {
     return vscode.window.registerCustomEditorProvider(
@@ -50,6 +120,32 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
       new RedactedEnvEditorProvider(),
       { webviewOptions: { retainContextWhenHidden: false } }
     );
+  }
+
+  private parse(document: vscode.TextDocument): Parsed {
+    const format = detectFormat(document);
+    if (format === "json") {
+      const text = document.getText();
+      try {
+        const rows: Row[] = [];
+        flattenJson(JSON.parse(text), "", rows);
+        return { format, rows };
+      } catch {
+        return {
+          format,
+          rows: [{ id: "__raw__", key: "(entire file)", value: text }],
+          note: "This JSON couldn't be parsed, so the whole file is masked.",
+        };
+      }
+    }
+    const rows: Row[] = [];
+    for (let i = 0; i < document.lineCount; i++) {
+      const parsed = parseEnvLine(document.lineAt(i).text, i);
+      if (parsed) {
+        rows.push({ id: `L${parsed.line}`, key: parsed.key.trim(), value: parsed.value });
+      }
+    }
+    return { format, rows };
   }
 
   public resolveCustomTextEditor(
@@ -61,20 +157,11 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
     webviewPanel.webview.html = this.html(webviewPanel.webview);
 
     const post = () => {
-      const rows: Row[] = [];
-      const other: { line: number; text: string }[] = [];
-      for (let i = 0; i < document.lineCount; i++) {
-        const text = document.lineAt(i).text;
-        const row = parseLine(text, i);
-        if (row) {
-          rows.push(row);
-        } else {
-          other.push({ line: i, text });
-        }
-      }
+      const parsed = this.parse(document);
       void webviewPanel.webview.postMessage({
         type: "load",
-        rows,
+        rows: parsed.rows,
+        note: parsed.note,
         fileName: document.uri.path.split("/").pop(),
       });
     };
@@ -90,41 +177,72 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
       if (msg.type === "ready") {
         post();
       } else if (msg.type === "edit") {
-        await this.applyEdit(document, msg.line, msg.value);
+        await this.applyEdit(document, String(msg.id), String(msg.value));
       } else if (msg.type === "openText") {
-        await vscode.commands.executeCommand(
-          "vscode.openWith",
-          document.uri,
-          "default"
-        );
+        await vscode.commands.executeCommand("shush.openAsText", document.uri);
       }
     });
   }
 
-  /** Replace the value portion of a single line, preserving key and separator. */
   private async applyEdit(
     document: vscode.TextDocument,
-    line: number,
+    id: string,
     value: string
   ): Promise<void> {
-    if (line < 0 || line >= document.lineCount) {
-      return;
+    if (id === "__raw__") {
+      return; // unparseable file — editing disabled
     }
-    const parsed = parseLine(document.lineAt(line).text, line);
-    if (!parsed) {
-      return;
-    }
-    const newText = `${parsed.key}${parsed.sep}${value}`;
-    if (newText === document.lineAt(line).text) {
-      return;
-    }
+    const format = detectFormat(document);
     const edit = new vscode.WorkspaceEdit();
-    edit.replace(document.uri, document.lineAt(line).range, newText);
+
+    if (format === "json") {
+      let root: unknown;
+      try {
+        root = JSON.parse(document.getText());
+      } catch {
+        return;
+      }
+      const tokens = pathTokens(id);
+      let node: any = root;
+      for (let i = 0; i < tokens.length - 1; i++) {
+        node = node?.[tokens[i]];
+        if (node === undefined || node === null) {
+          return;
+        }
+      }
+      const leaf = tokens[tokens.length - 1];
+      node[leaf] = coerce(node[leaf], value);
+      const indent = detectIndent(document.getText());
+      const serialized = JSON.stringify(root, null, indent);
+      const full = new vscode.Range(
+        document.positionAt(0),
+        document.positionAt(document.getText().length)
+      );
+      if (serialized === document.getText()) {
+        return;
+      }
+      edit.replace(document.uri, full, serialized);
+    } else {
+      const line = Number(id.slice(1));
+      if (!(line >= 0 && line < document.lineCount)) {
+        return;
+      }
+      const parsed = parseEnvLine(document.lineAt(line).text, line);
+      if (!parsed) {
+        return;
+      }
+      const newText = `${parsed.key}${parsed.sep}${value}`;
+      if (newText === document.lineAt(line).text) {
+        return;
+      }
+      edit.replace(document.uri, document.lineAt(line).range, newText);
+    }
+
     await vscode.workspace.applyEdit(edit);
   }
 
   private html(webview: vscode.Webview): string {
-    const n = nonce();
+    const n = this.nonce();
     const csp = [
       "default-src 'none'",
       "style-src 'unsafe-inline'",
@@ -139,7 +257,7 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
   body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 0; margin: 0; }
-  .bar { position: sticky; top: 0; display: flex; align-items: center; gap: 10px;
+  .bar { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 10px;
          padding: 10px 14px; background: var(--vscode-editor-background);
          border-bottom: 1px solid var(--vscode-panel-border); }
   .bar .name { font-weight: 600; margin-right: auto; }
@@ -147,9 +265,12 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
            border: none; padding: 4px 10px; border-radius: 4px; cursor: pointer; }
   button.secondary { color: var(--vscode-button-secondaryForeground); background: var(--vscode-button-secondaryBackground); }
   button:hover { opacity: .9; }
+  .note { padding: 8px 14px; background: var(--vscode-inputValidation-warningBackground, transparent);
+          border-bottom: 1px solid var(--vscode-panel-border); font-size: 12px; }
   table { border-collapse: collapse; width: 100%; }
   td { padding: 6px 14px; vertical-align: middle; border-bottom: 1px solid var(--vscode-panel-border); }
-  td.key { font-family: var(--vscode-editor-font-family); white-space: nowrap; color: var(--vscode-symbolIcon-variableForeground); }
+  td.key { font-family: var(--vscode-editor-font-family); white-space: nowrap;
+           color: var(--vscode-symbolIcon-variableForeground); }
   td.val { width: 100%; }
   input { width: 100%; box-sizing: border-box; font-family: var(--vscode-editor-font-family);
           color: var(--vscode-input-foreground); background: var(--vscode-input-background);
@@ -162,12 +283,13 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
 </head>
 <body>
   <div class="bar">
-    <span class="name" id="name">.env</span>
+    <span class="name" id="name">secrets</span>
     <button class="secondary" id="toggleAll">Reveal all</button>
     <button class="secondary" id="openText">Open as text</button>
   </div>
+  <div class="note" id="note" style="display:none"></div>
   <table id="rows"></table>
-  <div class="empty" id="empty" style="display:none">No key=value pairs found.</div>
+  <div class="empty" id="empty" style="display:none">No values found to redact.</div>
 <script nonce="${n}">
   const vscode = acquireVsCodeApi();
   let allRevealed = false;
@@ -185,7 +307,7 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
 
       const kd = document.createElement('td');
       kd.className = 'key';
-      kd.textContent = r.key.trim();
+      kd.textContent = r.key;
       tr.appendChild(kd);
 
       const vd = document.createElement('td');
@@ -194,8 +316,9 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
       input.type = allRevealed ? 'text' : 'password';
       input.value = r.value;
       input.spellcheck = false;
+      input.dataset.id = r.id;
       input.addEventListener('change', () => {
-        vscode.postMessage({ type: 'edit', line: r.line, value: input.value });
+        vscode.postMessage({ type: 'edit', id: r.id, value: input.value });
       });
       vd.appendChild(input);
       tr.appendChild(vd);
@@ -219,7 +342,10 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
   window.addEventListener('message', (e) => {
     const m = e.data;
     if (m.type === 'load') {
-      document.getElementById('name').textContent = m.fileName || '.env';
+      document.getElementById('name').textContent = m.fileName || 'secrets';
+      const note = document.getElementById('note');
+      if (m.note) { note.textContent = m.note; note.style.display = 'block'; }
+      else { note.style.display = 'none'; }
       render(m.rows);
     }
   });
@@ -242,5 +368,14 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
 </script>
 </body>
 </html>`;
+  }
+
+  private nonce(): string {
+    let s = "";
+    const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    for (let i = 0; i < 32; i++) {
+      s += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return s;
   }
 }
