@@ -2,7 +2,7 @@
   "name": "shush",
   "displayName": "Shush",
   "description": "Opens .env, .dev.vars, and JSON config files with their values redacted, so secrets never flash on screen during calls or screen shares.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "publisher": "thedevlabs-io",
   "author": {
     "name": "thedevlabs-io"

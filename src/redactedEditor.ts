@@ -5,12 +5,18 @@ import * as vscode from "vscode";
 
 type Format = "env" | "json";
 
-/** A single revealable row shown in the webview. */
+/** A row shown in the webview — either a leaf value or a container header. */
 interface Row {
+  /** Nesting depth, used to indent the tree. */
+  depth: number;
+  /** The label shown for this row (own key/index, not the full path). */
+  label: string;
+  /** True for object/array headers that group the rows beneath them. */
+  container?: boolean;
   /** Stable id used to route edits back: "L<line>" for env, a JSON path for json. */
-  id: string;
-  key: string;
-  value: string;
+  id?: string;
+  /** Present on leaf rows only. */
+  value?: string;
 }
 
 interface Parsed {
@@ -52,19 +58,41 @@ function parseEnvLine(text: string, line: number): EnvLine | null {
 
 // ---- json parsing --------------------------------------------------------
 
-/** Flatten a JSON value into leaf rows keyed by dotted/bracketed path. */
-function flattenJson(value: unknown, prefix: string, out: Row[]): void {
+/**
+ * Walk a JSON value into an indented row tree. Containers become header rows;
+ * leaves keep the full dotted/bracketed `id` (for edit routing) but display only
+ * their own key/index at the right depth. `label === null` marks the root, which
+ * emits no header of its own.
+ */
+function buildRows(
+  value: unknown,
+  label: string | null,
+  depth: number,
+  id: string,
+  out: Row[]
+): void {
   if (value !== null && typeof value === "object") {
+    if (label !== null) {
+      out.push({ depth, label, container: true });
+    }
+    const childDepth = label === null ? depth : depth + 1;
     if (Array.isArray(value)) {
-      value.forEach((v, i) => flattenJson(v, `${prefix}[${i}]`, out));
+      value.forEach((v, i) =>
+        buildRows(v, `[${i}]`, childDepth, id ? `${id}[${i}]` : `[${i}]`, out)
+      );
     } else {
       for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-        flattenJson(v, prefix ? `${prefix}.${k}` : k, out);
+        buildRows(v, k, childDepth, id ? `${id}.${k}` : k, out);
       }
     }
     return;
   }
-  out.push({ id: prefix, key: prefix, value: value === null ? "null" : String(value) });
+  out.push({
+    depth,
+    label: label ?? "",
+    id,
+    value: value === null ? "null" : String(value),
+  });
 }
 
 /** Tokenize a flattened path ("a.b[0].c") into keys/indices. */
@@ -128,12 +156,12 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
       const text = document.getText();
       try {
         const rows: Row[] = [];
-        flattenJson(JSON.parse(text), "", rows);
+        buildRows(JSON.parse(text), null, 0, "", rows);
         return { format, rows };
       } catch {
         return {
           format,
-          rows: [{ id: "__raw__", key: "(entire file)", value: text }],
+          rows: [{ depth: 0, label: "(entire file)", id: "__raw__", value: text }],
           note: "This JSON couldn't be parsed, so the whole file is masked.",
         };
       }
@@ -142,7 +170,7 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
     for (let i = 0; i < document.lineCount; i++) {
       const parsed = parseEnvLine(document.lineAt(i).text, i);
       if (parsed) {
-        rows.push({ id: `L${parsed.line}`, key: parsed.key.trim(), value: parsed.value });
+        rows.push({ depth: 0, label: parsed.key.trim(), id: `L${parsed.line}`, value: parsed.value });
       }
     }
     return { format, rows };
@@ -272,6 +300,9 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
   td.key { font-family: var(--vscode-editor-font-family); white-space: nowrap;
            color: var(--vscode-symbolIcon-variableForeground); }
   td.val { width: 100%; }
+  tr.container td { font-family: var(--vscode-editor-font-family); font-weight: 600;
+                    color: var(--vscode-foreground); opacity: .8; }
+  .twisty { opacity: .5; margin-right: 4px; }
   input { width: 100%; box-sizing: border-box; font-family: var(--vscode-editor-font-family);
           color: var(--vscode-input-foreground); background: var(--vscode-input-background);
           border: 1px solid var(--vscode-input-border, transparent); border-radius: 4px; padding: 4px 8px; }
@@ -303,11 +334,27 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
     table.innerHTML = '';
     document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
     for (const r of rows) {
+      const indent = (r.depth || 0) * 16;
+
+      if (r.container) {
+        const tr = document.createElement('tr');
+        tr.className = 'container';
+        const td = document.createElement('td');
+        td.colSpan = 3;
+        td.style.paddingLeft = (14 + indent) + 'px';
+        td.innerHTML = '<span class="twisty">▸</span>';
+        td.appendChild(document.createTextNode(r.label));
+        tr.appendChild(td);
+        table.appendChild(tr);
+        continue;
+      }
+
       const tr = document.createElement('tr');
 
       const kd = document.createElement('td');
       kd.className = 'key';
-      kd.textContent = r.key;
+      kd.style.paddingLeft = (14 + indent) + 'px';
+      kd.textContent = r.label;
       tr.appendChild(kd);
 
       const vd = document.createElement('td');
