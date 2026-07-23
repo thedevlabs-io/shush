@@ -2,7 +2,12 @@ node_modules/
 dist/
 *.vsix
 
+# Internal dev-only docs — never commit
+docs/PUBLISHING.md
+
 # Local test artifacts (dotenv files used to exercise the extension)
 .env
 .env.*
 *.env
+
+CLAUDE.local.md
