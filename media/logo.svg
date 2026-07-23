@@ -1,28 +1,22 @@
-<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Block .env Expose logo">
+<svg width="128" height="128" viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Shush logo">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="128" y2="128" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#2b2f3a"/>
-      <stop offset="1" stop-color="#12141a"/>
-    </linearGradient>
-    <linearGradient id="key" x1="40" y1="34" x2="96" y2="104" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#ffd76b"/>
-      <stop offset="1" stop-color="#f2a33c"/>
+    <linearGradient id="fg" x1="20" y1="48" x2="120" y2="82" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#f47c20"/>
+      <stop offset="1" stop-color="#d9660c"/>
     </linearGradient>
   </defs>
 
-  <!-- rounded tile background -->
-  <rect x="4" y="4" width="120" height="120" rx="26" fill="url(#bg)"/>
-  <rect x="4.5" y="4.5" width="119" height="119" rx="25.5" fill="none" stroke="#ffffff" stroke-opacity="0.06"/>
+  <!-- rounded tile background (thedevlabs.io near-black) -->
+  <rect x="4" y="4" width="120" height="120" rx="26" fill="#0e0e10"/>
+  <rect x="4.5" y="4.5" width="119" height="119" rx="25.5" fill="none" stroke="#f4f3f1" stroke-opacity="0.07"/>
 
-  <!-- padlock body -->
-  <rect x="38" y="58" width="52" height="42" rx="9" fill="url(#key)"/>
-  <!-- padlock shackle -->
-  <path d="M50 58 V49 a14 14 0 0 1 28 0 V58" fill="none" stroke="url(#key)" stroke-width="8" stroke-linecap="round"/>
+  <!-- "sh" wordmark in the brand code font -->
+  <text x="20" y="82" font-family="'IBM Plex Mono', ui-monospace, 'SF Mono', Menlo, monospace" font-size="42" font-weight="700" fill="url(#fg)">sh</text>
 
-  <!-- ".env" on the lock face -->
-  <text x="64" y="86" text-anchor="middle" font-family="ui-monospace, 'SF Mono', Menlo, monospace" font-size="17" font-weight="700" fill="#12141a">.env</text>
-
-  <!-- eye-off slash: secrets hidden -->
-  <path d="M30 32 L98 100" stroke="#12141a" stroke-width="13" stroke-linecap="round"/>
-  <path d="M30 32 L98 100" stroke="#ff5c6c" stroke-width="7" stroke-linecap="round"/>
+  <!-- trailing dots: the hushed "sh…", echoing the masked value field -->
+  <g fill="url(#fg)">
+    <circle cx="78" cy="76" r="6"/>
+    <circle cx="96" cy="76" r="6"/>
+    <circle cx="114" cy="76" r="6"/>
+  </g>
 </svg>
