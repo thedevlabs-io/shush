@@ -1,0 +1,76 @@
+{
+  "name": "block-env-expose",
+  "displayName": "Block .env Expose",
+  "description": "Hides .env files behind a confirmation gate so they don't flash on screen during calls or screen shares.",
+  "version": "0.1.0",
+  "publisher": "akhshy",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "env",
+    "secrets",
+    "privacy",
+    "screen share",
+    "dotenv"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "blockEnvExpose.lockAll",
+        "title": "Block .env: Re-lock all protected files"
+      },
+      {
+        "command": "blockEnvExpose.revealActive",
+        "title": "Block .env: Reveal the active protected file"
+      }
+    ],
+    "configuration": {
+      "title": "Block .env Expose",
+      "properties": {
+        "blockEnvExpose.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable blocking of protected files."
+        },
+        "blockEnvExpose.patterns": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/.env",
+            "**/.env.*",
+            "**/*.env"
+          ],
+          "description": "Glob patterns for files to protect. Matched against the workspace-relative path."
+        },
+        "blockEnvExpose.relockOnClose": {
+          "type": "boolean",
+          "default": true,
+          "description": "Re-lock a protected file once its editor is closed, so opening it again prompts for confirmation."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --minify",
+    "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
+    "compile": "tsc -p ./ --noEmit",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "esbuild": "^0.20.0",
+    "typescript": "^5.4.0"
+  }
+}
