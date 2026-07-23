@@ -1,34 +1,30 @@
 # Block .env Expose
 
-A VS Code extension that keeps `.env` (and similar) files hidden behind a
-confirmation gate, so their contents never flash on screen when you open them by
-accident during a call, screen share, or with someone sitting next to you.
+A VS Code extension that opens `.env` (and similar) files in a **redacted editor**:
+keys stay visible, but every value is masked as `••••••••` until you choose to
+reveal it. Secrets never render on screen — so an accidental open during a call,
+screen share, or with someone next to you won't leak anything.
 
 ## How it works
 
-When a protected file's tab opens, the extension **immediately closes it** —
-before the contents can render — and shows a modal:
+The extension registers a *custom editor* and makes it the **default** for env
+files. Because VS Code hands the file to the extension instead of the normal text
+editor, the raw values are never painted — there's no flash. You see:
 
-> "*.env* may contain secrets. Reveal it?"
+```
+API_KEY        ••••••••••••••  👁
+DATABASE_URL   ••••••••••••••  👁
+```
 
-Only when you click **Reveal** does the file reopen and show its contents. If you
-dismiss the modal, the file stays closed. Once you close a revealed file it is
-re-locked, so the next time it opens you're prompted again.
+- **👁 per row** — reveal/hide that single value.
+- **Reveal all / Hide all** — toggle every value at once.
+- **Open as text** — reopen the file in the normal text editor when you actually
+  need to edit it as plain text.
 
-## Settings
+Values are editable in place: type into a field and the change is written back to
+the file. Comment (`#`) and blank lines are ignored.
 
-| Setting | Default | Meaning |
-| --- | --- | --- |
-| `blockEnvExpose.enabled` | `true` | Turn the guard on/off. |
-| `blockEnvExpose.patterns` | `["**/.env", "**/.env.*", "**/*.env"]` | Globs for files to protect. |
-| `blockEnvExpose.relockOnClose` | `true` | Re-lock a file after its editor closes. |
-
-## Commands
-
-- **Block .env: Re-lock all protected files** — forget approvals and close any
-  open protected files (use this right before you start sharing your screen).
-- **Block .env: Reveal the active protected file** — mark the current file as
-  approved without a prompt.
+Protected file patterns: `**/.env`, `**/.env.*`, `**/*.env`.
 
 ## Develop / run locally
 
@@ -37,21 +33,22 @@ npm install
 npm run build      # bundle to dist/extension.js
 ```
 
-Then press **F5** in VS Code to launch an Extension Development Host, open any
-`.env` file, and watch it get gated.
+Then press **F5** to launch an Extension Development Host, open any `.env` file,
+and it opens redacted.
 
-## Package as a `.vsix`
+## Package & install
 
 ```bash
-npx @vscode/vsce package
+npm run package    # produces block-env-expose-<version>.vsix
 ```
 
-Install the resulting `.vsix` via the Extensions view → `…` → *Install from
-VSIX…*.
+Install via the Extensions view → `…` → **Install from VSIX…**, or:
 
-## Limitations
+```bash
+code --install-extension block-env-expose-0.1.0.vsix
+```
 
-The guard reacts to the tab-open event and closes the tab as fast as possible.
-There is a fraction of a second where VS Code may paint the editor before the
-close lands. For a hard guarantee, also re-lock (`Block .env: Re-lock all`)
-before you begin sharing.
+## Reopening as plain text
+
+To bypass redaction for a file, right-click it → **Open With…** → **Text
+Editor**, or use the **Open as text** button in the redacted editor.

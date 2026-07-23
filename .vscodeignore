@@ -4,3 +4,6 @@ tsconfig.json
 node_modules/**
 **/*.map
 .vscode/**
+.env
+.env.*
+*.vsix

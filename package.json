@@ -4,6 +4,7 @@
   "description": "Hides .env files behind a confirmation gate so they don't flash on screen during calls or screen shares.",
   "version": "0.1.0",
   "publisher": "akhshy",
+  "icon": "media/icon.png",
   "engines": {
     "vscode": "^1.85.0"
   },
@@ -17,48 +18,21 @@
     "screen share",
     "dotenv"
   ],
-  "activationEvents": [
-    "onStartupFinished"
-  ],
+  "activationEvents": [],
   "main": "./dist/extension.js",
   "contributes": {
-    "commands": [
+    "customEditors": [
       {
-        "command": "blockEnvExpose.lockAll",
-        "title": "Block .env: Re-lock all protected files"
-      },
-      {
-        "command": "blockEnvExpose.revealActive",
-        "title": "Block .env: Reveal the active protected file"
+        "viewType": "blockEnvExpose.redactedEditor",
+        "displayName": "Redacted .env",
+        "selector": [
+          { "filenamePattern": "**/.env" },
+          { "filenamePattern": "**/.env.*" },
+          { "filenamePattern": "**/*.env" }
+        ],
+        "priority": "default"
       }
-    ],
-    "configuration": {
-      "title": "Block .env Expose",
-      "properties": {
-        "blockEnvExpose.enabled": {
-          "type": "boolean",
-          "default": true,
-          "description": "Enable blocking of protected files."
-        },
-        "blockEnvExpose.patterns": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "default": [
-            "**/.env",
-            "**/.env.*",
-            "**/*.env"
-          ],
-          "description": "Glob patterns for files to protect. Matched against the workspace-relative path."
-        },
-        "blockEnvExpose.relockOnClose": {
-          "type": "boolean",
-          "default": true,
-          "description": "Re-lock a protected file once its editor is closed, so opening it again prompts for confirmation."
-        }
-      }
-    }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run build",
