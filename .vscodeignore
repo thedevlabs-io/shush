@@ -1,9 +1,25 @@
-src/**
-.gitignore
+# Everything here is excluded from the packaged .vsix (vsce reads this file,
+# not .gitignore). A consumer only needs dist/, media/, README, LICENSE,
+# package.json and the changelog — keep internal docs and dev config out.
+
+.claude/
+.vscode/
+docs/
+AGENTS.md
+CLAUDE.md
+CLAUDE.local.md
+
+# Source & build tooling — the bundled dist/extension.js is what ships.
+src/
 tsconfig.json
-node_modules/**
+.gitignore
+.vscodeignore
 **/*.map
-.vscode/**
+
+# Build artifacts and local test files
+*.vsix
 .env
 .env.*
-*.vsix
+*.env
+.shushrc.json
+sample.json
