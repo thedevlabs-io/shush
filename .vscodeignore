@@ -12,11 +12,13 @@ CLAUDE.local.md
 # Source & build tooling — the bundled dist/extension.js is what ships.
 src/
 tsconfig.json
+eslint.config.mjs
 .gitignore
 .vscodeignore
 **/*.map
 
 # Build artifacts and local test files
+dist/*.test.cjs
 *.vsix
 .env
 .env.*

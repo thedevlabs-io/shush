@@ -5,6 +5,8 @@
 import * as vscode from "vscode";
 import { RedactedEnvEditorProvider } from "./redactedEditor";
 import { basename, matchesAny } from "./glob";
+import { ENABLED_KEY, HistoryStore, MAX_VERSIONS_KEY } from "./history";
+import { HistoryPanel } from "./historyPanel";
 
 const CONFIG_FILE = ".shushrc.json";
 
@@ -27,8 +29,8 @@ class ConfigStore {
       const uri = vscode.Uri.joinPath(folder.uri, CONFIG_FILE);
       try {
         const bytes = await vscode.workspace.fs.readFile(uri);
-        const parsed = JSON.parse(new TextDecoder().decode(bytes));
-        if (Array.isArray(parsed?.patterns)) {
+        const parsed = JSON.parse(new TextDecoder().decode(bytes)) as { patterns?: unknown };
+        if (Array.isArray(parsed.patterns)) {
           for (const p of parsed.patterns) {
             if (typeof p === "string") {
               fromFiles.push(p);
@@ -91,8 +93,12 @@ async function addPattern(pattern: string): Promise<void> {
   let config: { patterns: string[] } = { patterns: [] };
   try {
     const bytes = await vscode.workspace.fs.readFile(uri);
-    const parsed = JSON.parse(new TextDecoder().decode(bytes));
-    config = { patterns: Array.isArray(parsed?.patterns) ? parsed.patterns : [] };
+    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as { patterns?: unknown };
+    config = {
+      patterns: Array.isArray(parsed.patterns)
+        ? parsed.patterns.filter((p): p is string => typeof p === "string")
+        : [],
+    };
   } catch {
     // starting a fresh config
   }
@@ -108,9 +114,81 @@ async function addPattern(pattern: string): Promise<void> {
   );
 }
 
+/**
+ * History keeps copies of secrets alive after the file changes, so the first time
+ * it is switched on we say plainly where those copies live and let the user back out.
+ */
+async function confirmHistoryOptIn(history: HistoryStore): Promise<void> {
+  const choice = await vscode.window.showWarningMessage(
+    "Shush will now keep a version history of protected files.",
+    {
+      modal: true,
+      detail:
+        "Snapshots are stored encrypted in your OS credential store (Keychain on macOS, " +
+        "Credential Manager on Windows, gnome-keyring/KWallet on Linux) — never in the " +
+        "workspace, so they can't be committed. They stay on this machine and are readable " +
+        "by anything running as you. On Linux without a keyring, VS Code falls back to a " +
+        "weaker local store.\n\nRun \"Shush: Delete all stored version history\" to purge.",
+    },
+    "Keep history on",
+    "Turn it back off"
+  );
+  if (choice !== "Keep history on") {
+    await vscode.workspace
+      .getConfiguration()
+      .update(ENABLED_KEY, false, vscode.ConfigurationTarget.Global);
+    await history.clearAll(openProtectedUris());
+    HistoryPanel.closeAll();
+  }
+}
+
+/**
+ * Turning history off stops new snapshots but leaves the existing ones in the
+ * credential store, where nothing in the UI would show them any more. Offer to
+ * delete them, because "off" reasonably reads as "gone".
+ */
+async function offerPurgeOnDisable(history: HistoryStore): Promise<void> {
+  const choice = await vscode.window.showWarningMessage(
+    "Version history is off. Snapshots already taken are still stored.",
+    { modal: true, detail: "Delete them now, or keep them in case you turn history back on." },
+    "Delete them",
+    "Keep them"
+  );
+  if (choice === "Delete them") {
+    const count = await history.clearAll(openProtectedUris());
+    HistoryPanel.closeAll();
+    void vscode.window.showInformationMessage(
+      `Shush: cleared stored history for ${count} file${count === 1 ? "" : "s"}.`
+    );
+  }
+}
+
+/** URIs currently open in the redacted editor — a safety net for `clearAll`. */
+function openProtectedUris(): string[] {
+  const uris: string[] = [];
+  for (const group of vscode.window.tabGroups.all) {
+    for (const tab of group.tabs) {
+      if (
+        tab.input instanceof vscode.TabInputCustom &&
+        tab.input.viewType === RedactedEnvEditorProvider.viewType
+      ) {
+        uris.push(tab.input.uri.toString());
+      }
+    }
+  }
+  return uris;
+}
+
 export function activate(context: vscode.ExtensionContext): void {
   const store = new ConfigStore();
-  context.subscriptions.push(RedactedEnvEditorProvider.register(context));
+  const history = new HistoryStore(context.secrets, () => {
+    const config = vscode.workspace.getConfiguration();
+    return {
+      enabled: config.get<boolean>(ENABLED_KEY, false),
+      maxVersions: config.get<number>(MAX_VERSIONS_KEY, 10),
+    };
+  });
+  context.subscriptions.push(RedactedEnvEditorProvider.register(context, history));
 
   void store.reload().then(() => sweepOpenTabs(store));
 
@@ -141,6 +219,9 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("shush.patterns")) {
         reloadAndSweep();
+      }
+      if (e.affectsConfiguration(ENABLED_KEY)) {
+        void (history.enabled ? confirmHistoryOptIn(history) : offerPurgeOnDisable(history));
       }
     }),
     vscode.workspace.onDidChangeWorkspaceFolders(reloadAndSweep)
@@ -181,6 +262,33 @@ export function activate(context: vscode.ExtensionContext): void {
         await store.reload();
         sweepOpenTabs(store);
       }
+    }),
+
+    // A setting alone would be invisible from the command palette.
+    vscode.commands.registerCommand("shush.toggleHistory", async () => {
+      const turningOn = !history.enabled;
+      await vscode.workspace
+        .getConfiguration()
+        .update(ENABLED_KEY, turningOn, vscode.ConfigurationTarget.Global);
+      if (!turningOn) {
+        void vscode.window.showInformationMessage("Shush: version history is off.");
+      }
+    }),
+
+    vscode.commands.registerCommand("shush.clearHistory", async () => {
+      const confirm = await vscode.window.showWarningMessage(
+        "Delete every version snapshot Shush has stored?",
+        { modal: true, detail: "This cannot be undone." },
+        "Delete all"
+      );
+      if (confirm !== "Delete all") {
+        return;
+      }
+      const count = await history.clearAll(openProtectedUris());
+      HistoryPanel.closeAll(); // an open history tab would outlive the data it shows
+      void vscode.window.showInformationMessage(
+        `Shush: cleared stored history for ${count} file${count === 1 ? "" : "s"}.`
+      );
     }),
 
     vscode.commands.registerCommand("shush.openConfig", async () => {

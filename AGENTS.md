@@ -20,6 +20,23 @@ Three source files, all in `src/`, bundled by esbuild into a single CJS file.
   (`CustomTextEditorProvider`). Parses the document, renders a webview of
   key/value rows, and writes edits back via `WorkspaceEdit`. Contains the full
   webview HTML/CSS/JS inline in `html()`.
+- **`history.ts`** — `HistoryStore`, the opt-in snapshot store. Snapshots go into
+  `context.secrets` (`SecretStorage`), one JSON bucket per file keyed by a sha256
+  of the URI, plus an index key so "clear all" can find every bucket. **Never
+  write history to disk or into the workspace** — that would put secrets
+  somewhere git can reach them, which is the whole thing this extension prevents.
+  `shush.history.enabled` / `maxVersions` are `application`-scoped on purpose: a
+  workspace must not be able to enable secret retention for a teammate.
+- **`historyPanel.ts`** — the separate tab that shows one stored version, or a
+  key-level diff of two. A webview, **never `vscode.diff`** — the built-in diff
+  editor is a plain text editor and would print both versions of every secret.
+  One panel per file, reused; `closeAll()` runs on any purge so a tab can't
+  outlive the data behind it.
+- **`diff.ts`** — pure key-level comparison (`added`/`removed`/`changed`/
+  `unchanged`), keyed by env name or JSON path.
+- **`model.ts`** — pure helpers (env key validation, value sanitising, snapshot
+  id/pruning) with no `vscode` import, so `npm test` can bundle and run them
+  under `node:test`.
 - **`glob.ts`** — a hand-rolled minimal glob matcher (`**`, `*`, `?` only) and
   `basename`. Shared so built-in and user patterns match identically. No
   external glob dependency.
@@ -54,8 +71,15 @@ guards against re-entrant swaps.
   preserves the file's indentation style. Unparseable JSON is masked as one
   `__raw__` block and is **not editable**.
 
-The webview communicates over `postMessage`: `ready`/`edit`/`openText` from the
-webview, `load` (rows) from the extension. A strict CSP with a per-render nonce
+Adding a value uses VS Code input boxes rather than webview fields so the value
+prompt can be `password: true`. Env values are run through `sanitizeEnvValue` on
+both edit and add — a raw newline would otherwise inject extra variables.
+
+The webview communicates over `postMessage`: `ready`/`edit`/`openText`/`add`/
+`versions`/`showVersion`/`restoreVersion`/`clearHistory` from the webview,
+`load` (rows), `versions` (timestamps only, never content) and `versionRows`
+from the extension. Historical versions render through the same masking path as
+the live file — never as plaintext or a diff. A strict CSP with a per-render nonce
 guards the inline script.
 
 ## Conventions specific to this repo
