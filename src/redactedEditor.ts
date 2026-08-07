@@ -271,6 +271,8 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
         await vscode.commands.executeCommand("shush.openAsText", document.uri);
       } else if (msg.type === "add") {
         await this.addValue(document);
+      } else if (msg.type === "toggleHistory") {
+        await vscode.commands.executeCommand("shush.toggleHistory");
       } else if (msg.type === "versions") {
         await postVersions();
       } else if (msg.type === "showVersion") {
@@ -633,7 +635,7 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
   <div class="bar">
     <span class="name" id="name">secrets</span>
     <button class="secondary" id="add">+ Add value</button>
-    <button class="secondary" id="historyBtn" style="display:none">History</button>
+    <button class="secondary" id="historyBtn">History</button>
     <button class="secondary" id="toggleAll">Reveal all</button>
     <button class="secondary" id="openText">Open as text</button>
   </div>
@@ -651,6 +653,7 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
   let allRevealed = false;
   /** null while showing the file itself; a timestamp while previewing a stored version. */
   let viewingAt = null;
+  let historyEnabled = false;
 
   // Feather icons (MIT) — inline so they render identically on every platform.
   const EYE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>';
@@ -720,6 +723,22 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
   function renderVersions(versions) {
     const box = document.getElementById('versions');
     box.innerHTML = '';
+    if (!historyEnabled) {
+      const p = document.createElement('div');
+      p.className = 'hint';
+      p.textContent =
+        'Version history is off. When on, Shush keeps a snapshot of this file each time ' +
+        'you save it, encrypted in your OS credential store — never in the project folder.';
+      box.appendChild(p);
+      const wrap = document.createElement('div');
+      wrap.className = 'hint';
+      const on = document.createElement('button');
+      on.textContent = 'Turn on version history';
+      on.addEventListener('click', () => vscode.postMessage({ type: 'toggleHistory' }));
+      wrap.appendChild(on);
+      box.appendChild(wrap);
+      return;
+    }
     if (!versions.length) {
       const p = document.createElement('div');
       p.className = 'hint';
@@ -771,10 +790,7 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
     const m = e.data;
     if (m.type === 'load') {
       document.getElementById('name').textContent = m.fileName || 'secrets';
-      document.getElementById('historyBtn').style.display = m.historyEnabled ? '' : 'none';
-      if (!m.historyEnabled) {
-        document.getElementById('versions').style.display = 'none';
-      }
+      historyEnabled = !!m.historyEnabled;
       const note = document.getElementById('note');
       if (m.note) { note.textContent = m.note; note.style.display = 'block'; }
       else { note.style.display = 'none'; }

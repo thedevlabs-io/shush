@@ -76,6 +76,10 @@
         "title": "Shush: Open active file as plain text"
       },
       {
+        "command": "shush.toggleHistory",
+        "title": "Shush: Turn version history on or off"
+      },
+      {
         "command": "shush.clearHistory",
         "title": "Shush: Delete all stored version history"
       }

@@ -34,6 +34,11 @@ All notable changes to Shush are documented here. This project follows
     files opened in the redacted editor are ever snapshotted.
   - **Impact:** nothing is stored and no behaviour changes unless a user turns it
     on themselves.
+  - **Discoverability:** enabling history is a setting, which meant it was
+    invisible from the command palette — the first place people look. Added
+    **Shush: Turn version history on or off**, and the toolbar `History` button
+    is now always shown, explaining the feature and offering to enable it when
+    it's off rather than hiding itself.
 
 ### Fixed
 
