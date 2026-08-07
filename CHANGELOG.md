@@ -81,9 +81,15 @@ All notable changes to Shush are documented here. This project follows
 
 ### Internal
 
-- New `src/model.ts` (pure helpers) and `src/history.ts` (snapshot store).
+- New `src/model.ts` (pure helpers), `src/history.ts` (snapshot store),
+  `src/diff.ts` (version comparison) and `src/historyPanel.ts` (the history tab).
   `npm test` runs a `node:test` suite over the pure logic — no new runtime
   dependencies.
+- **Added ESLint** (`npm run lint`) with type-aware rules, and made
+  `vscode:prepublish` run lint + tests before building, so a broken build can't
+  be packaged. Fixing the findings replaced the `any`-typed JSON tree walking
+  with a real `JsonValue` type and narrowing helpers, and both webview message
+  handlers now validate their input at the boundary instead of trusting it.
 
 ## [0.2.3] — 2026-07-23
 

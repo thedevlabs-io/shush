@@ -7,14 +7,16 @@ import { HistoryStore, type HistorySettings, type SecretStore } from "./history"
 
 class FakeSecrets implements SecretStore {
   readonly map = new Map<string, string>();
-  async get(key: string) {
-    return this.map.get(key);
+  get(key: string) {
+    return Promise.resolve(this.map.get(key));
   }
-  async store(key: string, value: string) {
+  store(key: string, value: string) {
     this.map.set(key, value);
+    return Promise.resolve();
   }
-  async delete(key: string) {
+  delete(key: string) {
     this.map.delete(key);
+    return Promise.resolve();
   }
 }
 

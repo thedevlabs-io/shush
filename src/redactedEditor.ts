@@ -16,6 +16,43 @@ import { HistoryPanel } from "./historyPanel";
 
 type Format = "env" | "json";
 
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+type JsonContainer = JsonValue[] | { [key: string]: JsonValue };
+
+function isContainer(value: JsonValue): value is JsonContainer {
+  return value !== null && typeof value === "object";
+}
+
+function childAt(node: JsonContainer, token: string | number): JsonValue | undefined {
+  return Array.isArray(node)
+    ? node[Number(token)]
+    : (node as Record<string, JsonValue>)[String(token)];
+}
+
+function setChild(node: JsonContainer, token: string | number, value: JsonValue): void {
+  if (Array.isArray(node)) {
+    node[Number(token)] = value;
+  } else {
+    (node as Record<string, JsonValue>)[String(token)] = value;
+  }
+}
+
+/** Parse a document's JSON, or undefined when it isn't valid. */
+function parseJson(text: string): JsonValue | undefined {
+  try {
+    return JSON.parse(text) as JsonValue;
+  } catch {
+    return undefined;
+  }
+}
+
+function leafText(value: JsonValue): string {
+  if (value === null) {
+    return "null";
+  }
+  return typeof value === "string" ? value : JSON.stringify(value);
+}
+
 /** A row shown in the webview — either a leaf value or a container header. */
 interface Row {
   /** Nesting depth, used to indent the tree. */
@@ -76,13 +113,13 @@ function parseEnvLine(text: string, line: number): EnvLine | null {
  * emits no header of its own.
  */
 function buildRows(
-  value: unknown,
+  value: JsonValue,
   label: string | null,
   depth: number,
   id: string,
   out: Row[]
 ): void {
-  if (value !== null && typeof value === "object") {
+  if (isContainer(value)) {
     if (label !== null) {
       out.push({ depth, label, container: true });
     }
@@ -92,7 +129,7 @@ function buildRows(
         buildRows(v, `[${i}]`, childDepth, id ? `${id}[${i}]` : `[${i}]`, out)
       );
     } else {
-      for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      for (const [k, v] of Object.entries(value)) {
         buildRows(v, k, childDepth, id ? `${id}.${k}` : k, out);
       }
     }
@@ -102,7 +139,7 @@ function buildRows(
     depth,
     label: label ?? "",
     id,
-    value: value === null ? "null" : String(value),
+    value: leafText(value),
   });
 }
 
@@ -127,7 +164,7 @@ function pathTokens(path: string): (string | number)[] {
 }
 
 /** Coerce a user-entered string back to the type of the value it replaces. */
-function coerce(previous: unknown, next: string): unknown {
+function coerce(previous: JsonValue | undefined, next: string): JsonValue {
   if (typeof previous === "number" && next.trim() !== "" && !isNaN(Number(next))) {
     return Number(next);
   }
@@ -161,17 +198,17 @@ function detectIndent(text: string): number | string {
  */
 function parseText(text: string, format: Format): Parsed {
   if (format === "json") {
-    try {
-      const rows: Row[] = [];
-      buildRows(JSON.parse(text), null, 0, "", rows);
-      return { format, rows };
-    } catch {
+    const root = parseJson(text);
+    if (root === undefined) {
       return {
         format,
         rows: [{ depth: 0, label: "(entire file)", id: "__raw__", value: text }],
         note: "This JSON couldn't be parsed, so the whole file is masked.",
       };
     }
+    const rows: Row[] = [];
+    buildRows(root, null, 0, "", rows);
+    return { format, rows };
   }
   const rows: Row[] = [];
   text.split(/\r?\n/).forEach((line, i) => {
@@ -200,6 +237,22 @@ function toEntries(rows: Row[], format: Format): Entry[] {
     });
   }
   return entries;
+}
+
+/** Messages the webview sends. Values are read defensively — this crosses a boundary. */
+interface WebviewMessage {
+  type: string;
+  id?: unknown;
+  value?: unknown;
+  at?: unknown;
+}
+
+function asMessage(raw: unknown): WebviewMessage | undefined {
+  if (raw === null || typeof raw !== "object") {
+    return undefined;
+  }
+  const msg = raw as Partial<WebviewMessage>;
+  return typeof msg.type === "string" ? (msg as WebviewMessage) : undefined;
 }
 
 /** Compact timestamp for tab titles and column headers. */
@@ -240,7 +293,7 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
     _token: vscode.CancellationToken
   ): void {
     webviewPanel.webview.options = { enableScripts: true };
-    webviewPanel.webview.html = this.html(webviewPanel.webview);
+    webviewPanel.webview.html = this.html();
 
     const isThisDoc = (uri: vscode.Uri) => uri.toString() === document.uri.toString();
 
@@ -291,7 +344,11 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
       configSub.dispose();
     });
 
-    webviewPanel.webview.onDidReceiveMessage(async (msg) => {
+    webviewPanel.webview.onDidReceiveMessage(async (raw: unknown) => {
+      const msg = asMessage(raw);
+      if (!msg) {
+        return;
+      }
       if (msg.type === "ready") {
         post();
         await postVersions();
@@ -434,29 +491,23 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
   private async pickJsonParent(
     document: vscode.TextDocument
   ): Promise<{ path: string; isArray: boolean; keys: string[] } | undefined> {
-    let root: unknown;
-    try {
-      root = JSON.parse(document.getText());
-    } catch {
+    const root = parseJson(document.getText());
+    if (root === undefined) {
       void vscode.window.showErrorMessage("Shush: this JSON can't be parsed, so it isn't editable.");
       return undefined;
     }
     type Container = { path: string; isArray: boolean; keys: string[] };
     const containers: Container[] = [];
-    const walk = (value: unknown, path: string): void => {
-      if (value === null || typeof value !== "object") {
+    const walk = (value: JsonValue, path: string): void => {
+      if (!isContainer(value)) {
         return;
       }
       const isArray = Array.isArray(value);
-      containers.push({
-        path,
-        isArray,
-        keys: isArray ? [] : Object.keys(value as Record<string, unknown>),
-      });
-      if (isArray) {
-        (value as unknown[]).forEach((v, i) => walk(v, `${path}[${i}]`));
+      containers.push({ path, isArray, keys: isArray ? [] : Object.keys(value) });
+      if (Array.isArray(value)) {
+        value.forEach((v, i) => walk(v, `${path}[${i}]`));
       } else {
-        for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+        for (const [k, v] of Object.entries(value)) {
           walk(v, path ? `${path}.${k}` : k);
         }
       }
@@ -488,28 +539,25 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
     value: string
   ): string | undefined {
     const text = document.getText();
-    let root: unknown;
-    try {
-      root = JSON.parse(text);
-    } catch {
+    const root = parseJson(text);
+    if (root === undefined || !isContainer(root)) {
       return undefined;
     }
-    let node: any = root;
+    let node: JsonContainer = root;
     for (const token of parentPath ? pathTokens(parentPath) : []) {
       if (isUnsafeJsonSegment(token)) {
         return undefined;
       }
-      node = node?.[token];
-      if (node === null || typeof node !== "object") {
+      const next = childAt(node, token);
+      if (next === undefined || !isContainer(next)) {
         return undefined;
       }
+      node = next;
     }
     if (Array.isArray(node)) {
       node.push(value);
-    } else if (node !== null && typeof node === "object") {
-      node[key] = value;
     } else {
-      return undefined;
+      node[key] = value;
     }
     return JSON.stringify(root, null, detectIndent(text));
   }
@@ -620,25 +668,24 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
     const edit = new vscode.WorkspaceEdit();
 
     if (format === "json") {
-      let root: unknown;
-      try {
-        root = JSON.parse(document.getText());
-      } catch {
+      const root = parseJson(document.getText());
+      if (root === undefined || !isContainer(root)) {
         return;
       }
       const tokens = pathTokens(id);
       if (tokens.some(isUnsafeJsonSegment)) {
         return; // would be silently dropped by the engine — refuse rather than lose the edit
       }
-      let node: any = root;
+      let node: JsonContainer = root;
       for (let i = 0; i < tokens.length - 1; i++) {
-        node = node?.[tokens[i]];
-        if (node === undefined || node === null) {
+        const next = childAt(node, tokens[i]);
+        if (next === undefined || !isContainer(next)) {
           return;
         }
+        node = next;
       }
       const leaf = tokens[tokens.length - 1];
-      node[leaf] = coerce(node[leaf], value);
+      setChild(node, leaf, coerce(childAt(node, leaf), value));
       const indent = detectIndent(document.getText());
       const serialized = JSON.stringify(root, null, indent);
       if (serialized === document.getText()) {
@@ -664,7 +711,7 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
     await vscode.workspace.applyEdit(edit);
   }
 
-  private html(webview: vscode.Webview): string {
+  private html(): string {
     const n = this.nonce();
     const csp = [
       "default-src 'none'",

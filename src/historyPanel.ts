@@ -62,11 +62,15 @@ export class HistoryPanel {
       panel.onDidDispose(() => HistoryPanel.panels.delete(key));
       // Registered once, but reads the handler from the map on each message so a
       // later show() can swap in a fresh closure.
-      panel.webview.onDidReceiveMessage((msg) => {
+      panel.webview.onDidReceiveMessage((raw: unknown) => {
+        if (raw === null || typeof raw !== "object") {
+          return;
+        }
+        const msg = raw as { type?: unknown; before?: unknown; after?: unknown; at?: unknown };
         const current = HistoryPanel.handlers.get(key);
-        if (msg?.type === "select") {
+        if (msg.type === "select") {
           current?.onSelect(String(msg.before), String(msg.after));
-        } else if (msg?.type === "restore") {
+        } else if (msg.type === "restore") {
           current?.onRestore(Number(msg.at));
         }
       });

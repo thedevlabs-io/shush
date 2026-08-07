@@ -29,8 +29,8 @@ class ConfigStore {
       const uri = vscode.Uri.joinPath(folder.uri, CONFIG_FILE);
       try {
         const bytes = await vscode.workspace.fs.readFile(uri);
-        const parsed = JSON.parse(new TextDecoder().decode(bytes));
-        if (Array.isArray(parsed?.patterns)) {
+        const parsed = JSON.parse(new TextDecoder().decode(bytes)) as { patterns?: unknown };
+        if (Array.isArray(parsed.patterns)) {
           for (const p of parsed.patterns) {
             if (typeof p === "string") {
               fromFiles.push(p);
@@ -93,8 +93,12 @@ async function addPattern(pattern: string): Promise<void> {
   let config: { patterns: string[] } = { patterns: [] };
   try {
     const bytes = await vscode.workspace.fs.readFile(uri);
-    const parsed = JSON.parse(new TextDecoder().decode(bytes));
-    config = { patterns: Array.isArray(parsed?.patterns) ? parsed.patterns : [] };
+    const parsed = JSON.parse(new TextDecoder().decode(bytes)) as { patterns?: unknown };
+    config = {
+      patterns: Array.isArray(parsed.patterns)
+        ? parsed.patterns.filter((p): p is string => typeof p === "string")
+        : [],
+    };
   } catch {
     // starting a fresh config
   }

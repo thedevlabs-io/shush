@@ -80,9 +80,10 @@ export class HistoryStore {
       if (!Array.isArray(parsed)) {
         return [];
       }
-      return parsed.filter(
-        (s): s is Snapshot => typeof s?.at === "number" && typeof s?.content === "string"
-      );
+      return parsed.filter((s: unknown): s is Snapshot => {
+        const snapshot = s as Partial<Snapshot> | null;
+        return typeof snapshot?.at === "number" && typeof snapshot?.content === "string";
+      });
     } catch {
       return [];
     }

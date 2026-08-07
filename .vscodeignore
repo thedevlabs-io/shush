@@ -12,6 +12,7 @@ CLAUDE.local.md
 # Source & build tooling — the bundled dist/extension.js is what ships.
 src/
 tsconfig.json
+eslint.config.mjs
 .gitignore
 .vscodeignore
 **/*.map
