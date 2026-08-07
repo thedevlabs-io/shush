@@ -5,6 +5,12 @@ import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
 import { describe, summarize, type DiffRow } from "./diff";
 
+/** A choice in the Old/New dropdowns. `value` is "none", "current", or a timestamp. */
+export interface VersionOption {
+  value: string;
+  label: string;
+}
+
 export interface PanelContent {
   /** File name shown in the header. */
   fileName: string;
@@ -14,7 +20,15 @@ export interface PanelContent {
   /** True when only one version is being shown, so the panel drops the before column. */
   single: boolean;
   rows: DiffRow[];
+  /** Everything selectable, newest first, for both dropdowns. */
+  options: VersionOption[];
+  /** Current selections, matching `VersionOption.value`. */
+  before: string;
+  after: string;
 }
+
+/** Called when the user repicks either side. Values match `VersionOption.value`. */
+export type SelectHandler = (before: string, after: string) => void;
 
 /**
  * One panel per file, reused. Opening a second version for the same file
@@ -22,8 +36,9 @@ export interface PanelContent {
  */
 export class HistoryPanel {
   private static readonly panels = new Map<string, vscode.WebviewPanel>();
+  private static readonly handlers = new Map<string, SelectHandler>();
 
-  static show(key: string, content: PanelContent): void {
+  static show(key: string, content: PanelContent, onSelect: SelectHandler): void {
     const title = content.single
       ? `${content.fileName} @ ${content.afterLabel}`
       : `${content.fileName} — changes`;
@@ -31,7 +46,7 @@ export class HistoryPanel {
     let panel = HistoryPanel.panels.get(key);
     if (panel) {
       panel.title = title;
-      panel.reveal(panel.viewColumn);
+      panel.reveal(panel.viewColumn, true);
     } else {
       panel = vscode.window.createWebviewPanel(
         "shush.historyView",
@@ -41,8 +56,18 @@ export class HistoryPanel {
       );
       HistoryPanel.panels.set(key, panel);
       panel.onDidDispose(() => HistoryPanel.panels.delete(key));
+      // Registered once per panel; the handler is re-read from the map on each
+      // message so a later show() can swap in a fresh closure.
+      panel.webview.onDidReceiveMessage((msg) => {
+        if (msg?.type === "select") {
+          HistoryPanel.handlers.get(key)?.(String(msg.before), String(msg.after));
+        }
+      });
     }
+    HistoryPanel.handlers.set(key, onSelect);
 
+    // Re-rendering wholesale also re-masks every value, which is the behaviour
+    // we want when the user switches to a different pair of versions.
     panel.webview.html = HistoryPanel.html(content);
   }
 
@@ -52,6 +77,7 @@ export class HistoryPanel {
       panel.dispose();
     }
     HistoryPanel.panels.clear();
+    HistoryPanel.handlers.clear();
   }
 
   private static html(content: PanelContent): string {
@@ -104,6 +130,15 @@ export class HistoryPanel {
          display: inline-flex; }
   .eye:hover { opacity: 1; }
   .empty { padding: 24px 14px; opacity: .7; }
+  .picker { display: flex; align-items: center; gap: 8px; padding: 8px 14px; font-size: 12px;
+            border-bottom: 1px solid var(--vscode-panel-border); flex-wrap: wrap; }
+  .picker label { opacity: .7; text-transform: uppercase; letter-spacing: .04em; font-size: 11px; }
+  .picker select { font: inherit; color: var(--vscode-dropdown-foreground);
+                   background: var(--vscode-dropdown-background);
+                   border: 1px solid var(--vscode-dropdown-border, transparent);
+                   border-radius: 4px; padding: 3px 6px; }
+  .picker .arrow { opacity: .6; }
+  .picker .swap { margin-left: 4px; }
 </style>
 </head>
 <body>
@@ -112,6 +147,14 @@ export class HistoryPanel {
     <span class="summary" id="summary"></span>
     <button id="toggleUnchanged"></button>
     <button id="revealAll">Reveal all</button>
+  </div>
+  <div class="picker">
+    <label for="before">Old</label>
+    <select id="before"></select>
+    <span class="arrow">→</span>
+    <label for="after">New</label>
+    <select id="after"></select>
+    <button class="swap" id="swap" title="Swap the two sides">⇄ Swap</button>
   </div>
   <table id="table"></table>
   <div class="empty" id="empty" style="display:none"></div>
@@ -213,11 +256,46 @@ export class HistoryPanel {
       showUnchanged ? 'Hide unchanged' : 'Show unchanged';
   }
 
+  const api = acquireVsCodeApi();
+
+  function fillPicker(id, selected, includeNone) {
+    const select = document.getElementById(id);
+    select.innerHTML = '';
+    for (const opt of content.options) {
+      if (opt.value === 'none' && !includeNone) { continue; }
+      const el = document.createElement('option');
+      el.value = opt.value;
+      el.textContent = opt.label;
+      if (opt.value === selected) { el.selected = true; }
+      select.appendChild(el);
+    }
+    select.addEventListener('change', () => {
+      api.postMessage({
+        type: 'select',
+        before: document.getElementById('before').value,
+        after: document.getElementById('after').value,
+      });
+    });
+  }
+
+  // Only the "old" side may be "none" — that's what turns the diff into a
+  // single-version view. The "new" side is always a real version.
+  fillPicker('before', content.before, true);
+  fillPicker('after', content.after, false);
+
+  document.getElementById('swap').addEventListener('click', () => {
+    const before = document.getElementById('before').value;
+    const after = document.getElementById('after').value;
+    if (before === 'none') { return; }
+    api.postMessage({ type: 'select', before: after, after: before });
+  });
+
   document.getElementById('name').textContent = content.single
     ? content.fileName + ' @ ' + content.afterLabel
     : content.fileName + ':  ' + content.beforeLabel + '  →  ' + content.afterLabel;
   document.getElementById('summary').textContent = content.single ? '' : SUMMARY;
   document.getElementById('toggleUnchanged').style.display = content.single ? 'none' : '';
+  document.getElementById('swap').style.display = content.single ? 'none' : '';
   paintToggle();
 
   document.getElementById('revealAll').addEventListener('click', () => {

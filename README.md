@@ -87,6 +87,12 @@ every time you save it, so you can look back at what a value used to be. The
   tab: which keys were added, removed, or changed, with before and after side by
   side. Values stay masked; reveal them one at a time or all at once. Unchanged
   keys are hidden until you ask for them.
+
+  The diff tab has **Old** and **New** dropdowns, so you can repick either side
+  without going back — any stored version, or the current file, on either side,
+  with **⇄ Swap** to reverse the direction. Setting **Old** to
+  *"— show one version only"* turns it back into a single-version view. Changing
+  a side re-masks every value.
 - **Restore** — writes that version back after a confirmation, snapshotting the
   current contents first so restore is itself reversible.
 

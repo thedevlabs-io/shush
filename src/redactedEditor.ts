@@ -11,7 +11,7 @@ import {
   type SnapshotMeta,
 } from "./model";
 import { randomBytes } from "node:crypto";
-import { diffEntries, type Entry } from "./diff";
+import { diffEntries, type DiffRow, type Entry } from "./diff";
 import { HistoryPanel } from "./historyPanel";
 
 type Format = "env" | "json";
@@ -307,13 +307,9 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
       } else if (msg.type === "versions") {
         await postVersions();
       } else if (msg.type === "openVersion") {
-        await this.openVersionTab(document, Number(msg.at));
+        await this.openHistoryTab(document, "none", String(msg.at));
       } else if (msg.type === "compareVersion") {
-        await this.compareVersions(
-          document,
-          Number(msg.at),
-          msg.with === "current" ? "current" : Number(msg.with)
-        );
+        await this.openHistoryTab(document, String(msg.at), String(msg.with));
       } else if (msg.type === "restoreVersion") {
         await this.restoreVersion(document, Number(msg.at));
         await postVersions();
@@ -521,65 +517,68 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
     return JSON.stringify(root, null, detectIndent(text));
   }
 
-  /** Open one stored version in its own tab, masked. */
-  private async openVersionTab(document: vscode.TextDocument, at: number): Promise<void> {
-    const content = await this.history.contentAt(document.uri.toString(), at);
-    if (content === undefined) {
-      void vscode.window.showWarningMessage("Shush: that version is no longer stored.");
-      return;
-    }
-    const format = detectFormat(document);
-    const entries = toEntries(parseText(content, format).rows, format);
-    HistoryPanel.show(document.uri.toString(), {
-      fileName: document.uri.path.split("/").pop() ?? "secrets",
-      beforeLabel: "",
-      afterLabel: stamp(at),
-      single: true,
-      rows: entries.map((e) => ({ key: e.key, kind: "unchanged" as const, after: e.value })),
-    });
-  }
-
   /**
-   * Compare a stored version against the file as it is now, or against another
-   * stored version. Rendered as a masked key-level diff in its own tab — never
-   * VS Code's text diff editor, which would print both versions in the clear.
+   * Render the history tab for a chosen pair. `before`/`after` are option values:
+   * "none" (show one version only), "current" (the file as it stands), or a
+   * snapshot timestamp. Repicking in the tab's dropdowns comes back through here.
    */
-  private async compareVersions(
+  private async openHistoryTab(
     document: vscode.TextDocument,
-    at: number,
-    other: number | "current"
+    before: string,
+    after: string
   ): Promise<void> {
     const key = document.uri.toString();
-    const older = await this.history.contentAt(key, at);
-    if (older === undefined) {
+    const format = detectFormat(document);
+    const versions = await this.history.list(key);
+
+    const sideContent = async (value: string): Promise<string | undefined> =>
+      value === "current" ? document.getText() : this.history.contentAt(key, Number(value));
+
+    const label = (value: string): string =>
+      value === "current" ? "current file" : stamp(Number(value));
+
+    const newerText = await sideContent(after);
+    if (newerText === undefined) {
       void vscode.window.showWarningMessage("Shush: that version is no longer stored.");
       return;
     }
-    let newer: string | undefined;
-    let newerLabel: string;
-    if (other === "current") {
-      newer = document.getText();
-      newerLabel = "current file";
+    const newer = toEntries(parseText(newerText, format).rows, format);
+
+    let rows: DiffRow[];
+    let beforeLabel = "";
+    const single = before === "none";
+    if (single) {
+      rows = newer.map((e) => ({ key: e.key, kind: "unchanged" as const, after: e.value }));
     } else {
-      newer = await this.history.contentAt(key, other);
-      newerLabel = stamp(other);
-      if (newer === undefined) {
+      const olderText = await sideContent(before);
+      if (olderText === undefined) {
         void vscode.window.showWarningMessage("Shush: that version is no longer stored.");
         return;
       }
+      beforeLabel = label(before);
+      rows = diffEntries(toEntries(parseText(olderText, format).rows, format), newer);
     }
 
-    const format = detectFormat(document);
-    HistoryPanel.show(key, {
-      fileName: document.uri.path.split("/").pop() ?? "secrets",
-      beforeLabel: stamp(at),
-      afterLabel: newerLabel,
-      single: false,
-      rows: diffEntries(
-        toEntries(parseText(older, format).rows, format),
-        toEntries(parseText(newer, format).rows, format)
-      ),
-    });
+    HistoryPanel.show(
+      key,
+      {
+        fileName: document.uri.path.split("/").pop() ?? "secrets",
+        beforeLabel,
+        afterLabel: label(after),
+        single,
+        rows,
+        options: [
+          { value: "none", label: "— show one version only" },
+          { value: "current", label: "current file" },
+          ...versions.map((v) => ({ value: String(v.at), label: stamp(v.at) })),
+        ],
+        before,
+        after,
+      },
+      (nextBefore, nextAfter) => {
+        void this.openHistoryTab(document, nextBefore, nextAfter);
+      }
+    );
   }
 
   private async restoreVersion(document: vscode.TextDocument, at: number): Promise<void> {
