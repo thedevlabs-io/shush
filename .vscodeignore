@@ -17,6 +17,7 @@ tsconfig.json
 **/*.map
 
 # Build artifacts and local test files
+dist/*.test.cjs
 *.vsix
 .env
 .env.*
