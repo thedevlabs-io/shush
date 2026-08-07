@@ -1,7 +1,7 @@
 // ABOUTME: Opt-in local version history for protected secret files. Snapshots are held in
 // ABOUTME: VS Code SecretStorage (OS keychain) — never written to disk or into the workspace.
 
-import { fileId, prune, toMeta, type Snapshot, type SnapshotMeta } from "./model";
+import { fileId, prune, toMeta, type Snapshot, type SnapshotMeta } from "../core/model";
 
 export const ENABLED_KEY = "shush.history.enabled";
 export const MAX_VERSIONS_KEY = "shush.history.maxVersions";

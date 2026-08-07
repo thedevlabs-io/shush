@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { describe, diffEntries, summarize, type Entry } from "./diff";
+import { describe, diffEntries, summarize, type Entry } from "../src/core/diff";
 
 const e = (key: string, value: string): Entry => ({ key, value });
 

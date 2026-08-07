@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fileId, isValidEnvKey, prune, sanitizeEnvValue, toMeta } from "./model";
+import { fileId, isValidEnvKey, prune, sanitizeEnvValue, toMeta } from "../src/core/model";
 
 test("accepts conventional env keys", () => {
   for (const k of ["API_KEY", "_private", "app.name", "MY-KEY", "K1"]) {

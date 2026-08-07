@@ -8,7 +8,7 @@ export default tseslint.config(
   { ignores: ["dist/**", "node_modules/**", "*.vsix"] },
   js.configs.recommended,
   {
-    files: ["src/**/*.ts"],
+    files: ["src/**/*.ts", "test/**/*.ts"],
     extends: tseslint.configs.recommendedTypeChecked,
     languageOptions: {
       parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
@@ -28,7 +28,7 @@ export default tseslint.config(
   {
     // node:test's `test()` returns a promise the runner owns; awaiting each call
     // would serialise the suite for no benefit.
-    files: ["src/**/*.test.ts"],
+    files: ["test/**/*.test.ts"],
     rules: { "@typescript-eslint/no-floating-promises": "off" },
   }
 );

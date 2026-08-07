@@ -3,10 +3,10 @@
 // ABOUTME: files into the redacted editor so their values never stay on screen.
 
 import * as vscode from "vscode";
-import { RedactedEnvEditorProvider } from "./redactedEditor";
-import { basename, matchesAny } from "./glob";
-import { ENABLED_KEY, HistoryStore, MAX_VERSIONS_KEY } from "./history";
-import { HistoryPanel } from "./historyPanel";
+import { RedactedEnvEditorProvider } from "./ui/redactedEditor";
+import { basename, matchesAny } from "./core/glob";
+import { ENABLED_KEY, HistoryStore, MAX_VERSIONS_KEY } from "./history/store";
+import { HistoryPanel } from "./ui/historyPanel";
 
 const CONFIG_FILE = ".shushrc.json";
 

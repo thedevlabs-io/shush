@@ -100,7 +100,7 @@
           "type": "boolean",
           "default": false,
           "scope": "application",
-          "markdownDescription": "Keep a version history of protected files. **Off by default.** Snapshots are taken on save and stored encrypted in your OS credential store — never in the workspace, so they cannot be committed. User-scoped only: a workspace cannot switch this on for you."
+          "markdownDescription": "Keep a version history of protected files. **Off by default.** Snapshots are taken on save and stored encrypted in your OS credential store \u2014 never in the workspace, so they cannot be committed. User-scoped only: a workspace cannot switch this on for you."
         },
         "shush.history.maxVersions": {
           "type": "number",
@@ -119,7 +119,7 @@
     "watch": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap --watch",
     "compile": "tsc -p ./ --noEmit",
     "lint": "eslint .",
-    "test": "npm run compile && esbuild src/*.test.ts --bundle --outdir=dist --out-extension:.js=.cjs --platform=node --format=cjs && node --test dist/*.test.cjs",
+    "test": "npm run compile && esbuild test/*.test.ts --bundle --outdir=dist/test --out-extension:.js=.cjs --platform=node --format=cjs && node --test dist/test/*.test.cjs",
     "package": "vsce package"
   },
   "devDependencies": {
