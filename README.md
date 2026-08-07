@@ -80,10 +80,21 @@ value prompt is a password field, so a new secret never renders on screen either
 
 Turn on `shush.history.enabled` and Shush keeps a snapshot of each protected file
 every time you save it, so you can look back at what a value used to be. The
-**History** button in the toolbar lists versions; **View** renders an old version
-**masked, in the same redacted editor** — there's no plaintext diff — and
-**Restore** writes it back after a confirmation (snapshotting the current
-contents first, so restore is itself reversible).
+**History** button in the toolbar lists versions, each with:
+
+- **Open** — that version in **its own tab**, values masked.
+- **Compare to now** / **Compare to previous** — a **key-level diff** in its own
+  tab: which keys were added, removed, or changed, with before and after side by
+  side. Values stay masked; reveal them one at a time or all at once. Unchanged
+  keys are hidden until you ask for them.
+- **Restore** — writes that version back after a confirmation, snapshotting the
+  current contents first so restore is itself reversible.
+
+> **Why not VS Code's diff editor?** It's a plain text editor, so diffing two
+> `.env` versions would render every secret — old *and* new — in the clear, in a
+> tab that's easy to leave open on a call. A key-level diff is also the more
+> useful unit for a secrets file: you want to know *which keys changed*, not
+> which lines moved.
 
 This is a copy of your secrets that outlives the file, so it's built to fail safe:
 

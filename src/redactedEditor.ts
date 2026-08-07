@@ -11,6 +11,8 @@ import {
   type SnapshotMeta,
 } from "./model";
 import { randomBytes } from "node:crypto";
+import { diffEntries, type Entry } from "./diff";
+import { HistoryPanel } from "./historyPanel";
 
 type Format = "env" | "json";
 
@@ -181,6 +183,35 @@ function parseText(text: string, format: Format): Parsed {
   return { format, rows };
 }
 
+/**
+ * Flatten parsed rows into comparable key/value pairs. Env keys drop any
+ * `export ` prefix; JSON leaves are keyed by their full path so a value that
+ * moves between branches reads as a removal plus an addition, not a silent edit.
+ */
+function toEntries(rows: Row[], format: Format): Entry[] {
+  const entries: Entry[] = [];
+  for (const row of rows) {
+    if (row.container || row.value === undefined || row.id === "__raw__") {
+      continue;
+    }
+    entries.push({
+      key: format === "env" ? envKeyName(row.label) : row.id ?? row.label,
+      value: row.value,
+    });
+  }
+  return entries;
+}
+
+/** Compact timestamp for tab titles and column headers. */
+function stamp(at: number): string {
+  return new Date(at).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 // ---- provider ------------------------------------------------------------
 
 export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvider {
@@ -275,8 +306,14 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
         await vscode.commands.executeCommand("shush.toggleHistory");
       } else if (msg.type === "versions") {
         await postVersions();
-      } else if (msg.type === "showVersion") {
-        await this.showVersion(webviewPanel, document, Number(msg.at));
+      } else if (msg.type === "openVersion") {
+        await this.openVersionTab(document, Number(msg.at));
+      } else if (msg.type === "compareVersion") {
+        await this.compareVersions(
+          document,
+          Number(msg.at),
+          msg.with === "current" ? "current" : Number(msg.with)
+        );
       } else if (msg.type === "restoreVersion") {
         await this.restoreVersion(document, Number(msg.at));
         await postVersions();
@@ -484,22 +521,64 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
     return JSON.stringify(root, null, detectIndent(text));
   }
 
-  private async showVersion(
-    panel: vscode.WebviewPanel,
-    document: vscode.TextDocument,
-    at: number
-  ): Promise<void> {
+  /** Open one stored version in its own tab, masked. */
+  private async openVersionTab(document: vscode.TextDocument, at: number): Promise<void> {
     const content = await this.history.contentAt(document.uri.toString(), at);
     if (content === undefined) {
       void vscode.window.showWarningMessage("Shush: that version is no longer stored.");
       return;
     }
-    const parsed = parseText(content, detectFormat(document));
-    void panel.webview.postMessage({
-      type: "versionRows",
-      at,
-      rows: parsed.rows,
-      note: parsed.note,
+    const format = detectFormat(document);
+    const entries = toEntries(parseText(content, format).rows, format);
+    HistoryPanel.show(document.uri.toString(), {
+      fileName: document.uri.path.split("/").pop() ?? "secrets",
+      beforeLabel: "",
+      afterLabel: stamp(at),
+      single: true,
+      rows: entries.map((e) => ({ key: e.key, kind: "unchanged" as const, after: e.value })),
+    });
+  }
+
+  /**
+   * Compare a stored version against the file as it is now, or against another
+   * stored version. Rendered as a masked key-level diff in its own tab — never
+   * VS Code's text diff editor, which would print both versions in the clear.
+   */
+  private async compareVersions(
+    document: vscode.TextDocument,
+    at: number,
+    other: number | "current"
+  ): Promise<void> {
+    const key = document.uri.toString();
+    const older = await this.history.contentAt(key, at);
+    if (older === undefined) {
+      void vscode.window.showWarningMessage("Shush: that version is no longer stored.");
+      return;
+    }
+    let newer: string | undefined;
+    let newerLabel: string;
+    if (other === "current") {
+      newer = document.getText();
+      newerLabel = "current file";
+    } else {
+      newer = await this.history.contentAt(key, other);
+      newerLabel = stamp(other);
+      if (newer === undefined) {
+        void vscode.window.showWarningMessage("Shush: that version is no longer stored.");
+        return;
+      }
+    }
+
+    const format = detectFormat(document);
+    HistoryPanel.show(key, {
+      fileName: document.uri.path.split("/").pop() ?? "secrets",
+      beforeLabel: stamp(at),
+      afterLabel: newerLabel,
+      single: false,
+      rows: diffEntries(
+        toEntries(parseText(older, format).rows, format),
+        toEntries(parseText(newer, format).rows, format)
+      ),
     });
   }
 
@@ -620,10 +699,6 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
          padding: 4px 6px; display: inline-flex; align-items: center; }
   .eye:hover { opacity: 1; }
   .empty { padding: 24px 14px; opacity: .7; }
-  .banner { display: none; align-items: center; gap: 10px; padding: 8px 14px; font-size: 12px;
-            background: var(--vscode-inputValidation-warningBackground, transparent);
-            border-bottom: 1px solid var(--vscode-panel-border); }
-  .banner .when { margin-right: auto; }
   .versions { display: none; border-bottom: 1px solid var(--vscode-panel-border); }
   .versions ul { list-style: none; margin: 0; padding: 4px 0; }
   .versions li { display: flex; align-items: center; gap: 8px; padding: 4px 14px; font-size: 12px; }
@@ -639,11 +714,6 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
     <button class="secondary" id="toggleAll">Reveal all</button>
     <button class="secondary" id="openText">Open as text</button>
   </div>
-  <div class="banner" id="banner">
-    <span class="when" id="bannerWhen"></span>
-    <button id="restore">Restore this version</button>
-    <button class="secondary" id="backToCurrent">Back to current</button>
-  </div>
   <div class="versions" id="versions"></div>
   <div class="note" id="note" style="display:none"></div>
   <table id="rows"></table>
@@ -651,15 +721,13 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
 <script nonce="${n}">
   const vscode = acquireVsCodeApi();
   let allRevealed = false;
-  /** null while showing the file itself; a timestamp while previewing a stored version. */
-  let viewingAt = null;
   let historyEnabled = false;
 
   // Feather icons (MIT) — inline so they render identically on every platform.
   const EYE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>';
   const EYE_OFF = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
 
-  function render(rows, readOnly) {
+  function render(rows) {
     const table = document.getElementById('rows');
     table.innerHTML = '';
     document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
@@ -694,13 +762,9 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
       input.value = r.value;
       input.spellcheck = false;
       input.dataset.id = r.id;
-      if (readOnly) {
-        input.readOnly = true;
-      } else {
-        input.addEventListener('change', () => {
-          vscode.postMessage({ type: 'edit', id: r.id, value: input.value });
-        });
-      }
+      input.addEventListener('change', () => {
+        vscode.postMessage({ type: 'edit', id: r.id, value: input.value });
+      });
       vd.appendChild(input);
       tr.appendChild(vd);
 
@@ -747,18 +811,37 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
       return;
     }
     const ul = document.createElement('ul');
-    for (const v of versions) {
+    versions.forEach((v, i) => {
       const li = document.createElement('li');
       const when = document.createElement('span');
       when.className = 'when';
       when.textContent = new Date(v.at).toLocaleString();
       li.appendChild(when);
 
-      const view = document.createElement('button');
-      view.className = 'secondary';
-      view.textContent = 'View';
-      view.addEventListener('click', () => vscode.postMessage({ type: 'showVersion', at: v.at }));
-      li.appendChild(view);
+      const open = document.createElement('button');
+      open.className = 'secondary';
+      open.textContent = 'Open';
+      open.title = 'Open this version in its own tab';
+      open.addEventListener('click', () => vscode.postMessage({ type: 'openVersion', at: v.at }));
+      li.appendChild(open);
+
+      const compare = document.createElement('button');
+      compare.className = 'secondary';
+      compare.textContent = 'Compare to now';
+      compare.addEventListener('click', () =>
+        vscode.postMessage({ type: 'compareVersion', at: v.at, with: 'current' }));
+      li.appendChild(compare);
+
+      // Versions are newest-first, so the next entry is the one before this one.
+      const previous = versions[i + 1];
+      if (previous) {
+        const step = document.createElement('button');
+        step.className = 'secondary';
+        step.textContent = 'Compare to previous';
+        step.addEventListener('click', () =>
+          vscode.postMessage({ type: 'compareVersion', at: previous.at, with: v.at }));
+        li.appendChild(step);
+      }
 
       const restore = document.createElement('button');
       restore.className = 'secondary';
@@ -767,7 +850,7 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
       li.appendChild(restore);
 
       ul.appendChild(li);
-    }
+    });
     box.appendChild(ul);
 
     const clear = document.createElement('div');
@@ -780,12 +863,6 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
     box.appendChild(clear);
   }
 
-  function showCurrent() {
-    viewingAt = null;
-    document.getElementById('banner').style.display = 'none';
-    vscode.postMessage({ type: 'ready' });
-  }
-
   window.addEventListener('message', (e) => {
     const m = e.data;
     if (m.type === 'load') {
@@ -794,15 +871,9 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
       const note = document.getElementById('note');
       if (m.note) { note.textContent = m.note; note.style.display = 'block'; }
       else { note.style.display = 'none'; }
-      if (viewingAt === null) { render(m.rows, false); }
+      render(m.rows);
     } else if (m.type === 'versions') {
       renderVersions(m.versions || []);
-    } else if (m.type === 'versionRows') {
-      viewingAt = m.at;
-      document.getElementById('banner').style.display = 'flex';
-      document.getElementById('bannerWhen').textContent =
-        'Viewing the version saved ' + new Date(m.at).toLocaleString() + ' — read-only.';
-      render(m.rows, true);
     }
   });
 
@@ -817,14 +888,6 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
     if (!open) { vscode.postMessage({ type: 'versions' }); }
   });
 
-  document.getElementById('backToCurrent').addEventListener('click', showCurrent);
-
-  document.getElementById('restore').addEventListener('click', () => {
-    if (viewingAt !== null) {
-      vscode.postMessage({ type: 'restoreVersion', at: viewingAt });
-      showCurrent();
-    }
-  });
 
   document.getElementById('toggleAll').addEventListener('click', () => {
     allRevealed = !allRevealed;

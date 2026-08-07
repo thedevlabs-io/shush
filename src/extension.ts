@@ -6,6 +6,7 @@ import * as vscode from "vscode";
 import { RedactedEnvEditorProvider } from "./redactedEditor";
 import { basename, matchesAny } from "./glob";
 import { ENABLED_KEY, HistoryStore, MAX_VERSIONS_KEY } from "./history";
+import { HistoryPanel } from "./historyPanel";
 
 const CONFIG_FILE = ".shushrc.json";
 
@@ -133,6 +134,7 @@ async function confirmHistoryOptIn(history: HistoryStore): Promise<void> {
       .getConfiguration()
       .update(ENABLED_KEY, false, vscode.ConfigurationTarget.Global);
     await history.clearAll(openProtectedUris());
+    HistoryPanel.closeAll();
   }
 }
 
@@ -150,6 +152,7 @@ async function offerPurgeOnDisable(history: HistoryStore): Promise<void> {
   );
   if (choice === "Delete them") {
     const count = await history.clearAll(openProtectedUris());
+    HistoryPanel.closeAll();
     void vscode.window.showInformationMessage(
       `Shush: cleared stored history for ${count} file${count === 1 ? "" : "s"}.`
     );
@@ -280,6 +283,7 @@ export function activate(context: vscode.ExtensionContext): void {
         return;
       }
       const count = await history.clearAll(openProtectedUris());
+      HistoryPanel.closeAll(); // an open history tab would outlive the data it shows
       void vscode.window.showInformationMessage(
         `Shush: cleared stored history for ${count} file${count === 1 ? "" : "s"}.`
       );

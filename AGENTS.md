@@ -27,6 +27,13 @@ Three source files, all in `src/`, bundled by esbuild into a single CJS file.
   somewhere git can reach them, which is the whole thing this extension prevents.
   `shush.history.enabled` / `maxVersions` are `application`-scoped on purpose: a
   workspace must not be able to enable secret retention for a teammate.
+- **`historyPanel.ts`** — the separate tab that shows one stored version, or a
+  key-level diff of two. A webview, **never `vscode.diff`** — the built-in diff
+  editor is a plain text editor and would print both versions of every secret.
+  One panel per file, reused; `closeAll()` runs on any purge so a tab can't
+  outlive the data behind it.
+- **`diff.ts`** — pure key-level comparison (`added`/`removed`/`changed`/
+  `unchanged`), keyed by env name or JSON path.
 - **`model.ts`** — pure helpers (env key validation, value sanitising, snapshot
   id/pruning) with no `vscode` import, so `npm test` can bundle and run them
   under `node:test`.

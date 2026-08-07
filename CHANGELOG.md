@@ -20,8 +20,14 @@ All notable changes to Shush are documented here. This project follows
 
 - **Opt-in version history for protected files** (`shush.history.enabled`,
   default `false`). Snapshots are taken on save; the toolbar `History` button
-  lists versions, views one **masked in the redacted editor**, or restores it
-  behind a confirmation. New command **Shush: Delete all stored version history**;
+  lists versions. Each opens **in its own tab**, compares against the current
+  file or the previous version as a **masked key-level diff** (added / removed /
+  changed keys, before and after, revealed one at a time), or restores behind a
+  confirmation.
+  - **Why a custom diff and not VS Code's diff editor:** the diff editor is a
+    plain text editor, so it would render both versions of every secret in the
+    clear. A key-level comparison is also the right unit for a secrets file —
+    which keys changed, not which lines moved. New command **Shush: Delete all stored version history**;
   `shush.history.maxVersions` (default 10) caps retention.
   - **Why:** requested so a value can be recovered after an overwrite, without
     putting secrets in git.
