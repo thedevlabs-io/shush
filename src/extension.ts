@@ -260,8 +260,7 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
 
-    // Enabling history is a setting, not a command, so it is invisible from the
-    // command palette — where people look first. This makes it reachable.
+    // A setting alone would be invisible from the command palette.
     vscode.commands.registerCommand("shush.toggleHistory", async () => {
       const turningOn = !history.enabled;
       await vscode.workspace
@@ -270,7 +269,6 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!turningOn) {
         void vscode.window.showInformationMessage("Shush: version history is off.");
       }
-      // The opt-in / purge prompts run from the configuration listener above.
     }),
 
     vscode.commands.registerCommand("shush.clearHistory", async () => {

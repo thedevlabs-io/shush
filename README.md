@@ -80,21 +80,28 @@ value prompt is a password field, so a new secret never renders on screen either
 
 Turn on `shush.history.enabled` and Shush keeps a snapshot of each protected file
 every time you save it, so you can look back at what a value used to be. The
-**History** button in the toolbar lists versions, each with:
+**History** button in the toolbar (pinned to the top of the editor, so it stays
+reachable however far down the file you are) lists versions, each with two
+actions:
 
-- **Open** — that version in **its own tab**, values masked.
-- **Compare to now** / **Compare to previous** — a **key-level diff** in its own
-  tab: which keys were added, removed, or changed, with before and after side by
+- **Diff** — a **key-level diff in its own tab**: which keys were added, removed
+  or changed between that version and the current file, both values side by
   side. Values stay masked; reveal them one at a time or all at once. Unchanged
   keys are hidden until you ask for them.
+- **Restore** — opens that same diff *first*, so you see exactly what would
+  change, then confirms. The current contents are snapshotted before the write,
+  so a restore is itself reversible.
 
-  The diff tab has **Old** and **New** dropdowns, so you can repick either side
-  without going back — any stored version, or the current file, on either side,
-  with **⇄ Swap** to reverse the direction. Setting **Old** to
-  *"— show one version only"* turns it back into a single-version view. Changing
-  a side re-masks every value.
-- **Restore** — writes that version back after a confirmation, snapshotting the
-  current contents first so restore is itself reversible.
+The diff tab drives everything from two dropdowns:
+
+```
+From [ 7 Aug 09:14 ▾ ]  →  To [ current file ▾ ]   ⇄ Swap   Restore the "From" version
+```
+
+Either side can be any stored version or the current file, so you can compare
+any two points without going back to the list — **added** always means *present
+in To, absent in From*. Set **From** to *"— nothing"* to show a single version on
+its own. Changing either side re-masks every value.
 
 > **Why not VS Code's diff editor?** It's a plain text editor, so diffing two
 > `.env` versions would render every secret — old *and* new — in the clear, in a

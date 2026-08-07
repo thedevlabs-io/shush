@@ -269,8 +269,7 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
       }
     });
 
-    // Snapshot on save, and only for files already open in this editor — i.e. files
-    // Shush protects. Nothing is recorded for files the user never opened here.
+    // Only files opened in this editor are snapshotted — i.e. files Shush protects.
     const saveSub = vscode.workspace.onDidSaveTextDocument(async (doc) => {
       if (!isThisDoc(doc.uri)) {
         return;
@@ -306,10 +305,8 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
         await vscode.commands.executeCommand("shush.toggleHistory");
       } else if (msg.type === "versions") {
         await postVersions();
-      } else if (msg.type === "openVersion") {
-        await this.openHistoryTab(document, "none", String(msg.at));
-      } else if (msg.type === "compareVersion") {
-        await this.openHistoryTab(document, String(msg.at), String(msg.with));
+      } else if (msg.type === "diffVersion") {
+        await this.openHistoryTab(document, String(msg.at), "current");
       } else if (msg.type === "restoreVersion") {
         await this.restoreVersion(document, Number(msg.at));
         await postVersions();
@@ -568,28 +565,37 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
         single,
         rows,
         options: [
-          { value: "none", label: "— show one version only" },
+          { value: "none", label: "— nothing (show one version)" },
           { value: "current", label: "current file" },
           ...versions.map((v) => ({ value: String(v.at), label: stamp(v.at) })),
         ],
         before,
         after,
       },
-      (nextBefore, nextAfter) => {
-        void this.openHistoryTab(document, nextBefore, nextAfter);
+      {
+        onSelect: (nextBefore, nextAfter) =>
+          void this.openHistoryTab(document, nextBefore, nextAfter),
+        onRestore: (target) => void this.restoreVersion(document, target),
       }
     );
   }
 
+  /** Show what would change, then confirm. Seeing the diff first is the point. */
   private async restoreVersion(document: vscode.TextDocument, at: number): Promise<void> {
     const content = await this.history.contentAt(document.uri.toString(), at);
     if (content === undefined) {
       void vscode.window.showWarningMessage("Shush: that version is no longer stored.");
       return;
     }
+    await this.openHistoryTab(document, String(at), "current");
+
     const confirm = await vscode.window.showWarningMessage(
       `Replace ${document.uri.path.split("/").pop()} with the version from ${new Date(at).toLocaleString()}?`,
-      { modal: true, detail: "The current contents are snapshotted first, so this is reversible." },
+      {
+        modal: true,
+        detail:
+          "The changes are shown in the history tab. The current contents are snapshotted first, so this is reversible.",
+      },
       "Restore"
     );
     if (confirm !== "Restore") {
@@ -599,6 +605,7 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
     const edit = new vscode.WorkspaceEdit();
     edit.replace(document.uri, fullRange(document), content);
     await vscode.workspace.applyEdit(edit);
+    await this.openHistoryTab(document, String(at), "current");
   }
 
   private async applyEdit(
@@ -673,7 +680,8 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <style>
   body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); padding: 0; margin: 0; }
-  .bar { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 10px;
+  .header { position: sticky; top: 0; z-index: 1; background: var(--vscode-editor-background); }
+  .bar { display: flex; align-items: center; gap: 10px;
          padding: 10px 14px; background: var(--vscode-editor-background);
          border-bottom: 1px solid var(--vscode-panel-border); }
   .bar .name { font-weight: 600; margin-right: auto; }
@@ -698,7 +706,8 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
          padding: 4px 6px; display: inline-flex; align-items: center; }
   .eye:hover { opacity: 1; }
   .empty { padding: 24px 14px; opacity: .7; }
-  .versions { display: none; border-bottom: 1px solid var(--vscode-panel-border); }
+  .versions { display: none; border-bottom: 1px solid var(--vscode-panel-border);
+              max-height: 40vh; overflow-y: auto; background: var(--vscode-editor-background); }
   .versions ul { list-style: none; margin: 0; padding: 4px 0; }
   .versions li { display: flex; align-items: center; gap: 8px; padding: 4px 14px; font-size: 12px; }
   .versions li .when { margin-right: auto; font-family: var(--vscode-editor-font-family); }
@@ -706,6 +715,7 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
 </style>
 </head>
 <body>
+  <div class="header">
   <div class="bar">
     <span class="name" id="name">secrets</span>
     <button class="secondary" id="add">+ Add value</button>
@@ -714,6 +724,7 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
     <button class="secondary" id="openText">Open as text</button>
   </div>
   <div class="versions" id="versions"></div>
+  </div>
   <div class="note" id="note" style="display:none"></div>
   <table id="rows"></table>
   <div class="empty" id="empty" style="display:none">No values found to redact.</div>
@@ -810,46 +821,30 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
       return;
     }
     const ul = document.createElement('ul');
-    versions.forEach((v, i) => {
+    for (const v of versions) {
       const li = document.createElement('li');
       const when = document.createElement('span');
       when.className = 'when';
       when.textContent = new Date(v.at).toLocaleString();
       li.appendChild(when);
 
-      const open = document.createElement('button');
-      open.className = 'secondary';
-      open.textContent = 'Open';
-      open.title = 'Open this version in its own tab';
-      open.addEventListener('click', () => vscode.postMessage({ type: 'openVersion', at: v.at }));
-      li.appendChild(open);
-
-      const compare = document.createElement('button');
-      compare.className = 'secondary';
-      compare.textContent = 'Compare to now';
-      compare.addEventListener('click', () =>
-        vscode.postMessage({ type: 'compareVersion', at: v.at, with: 'current' }));
-      li.appendChild(compare);
-
-      // Versions are newest-first, so the next entry is the one before this one.
-      const previous = versions[i + 1];
-      if (previous) {
-        const step = document.createElement('button');
-        step.className = 'secondary';
-        step.textContent = 'Compare to previous';
-        step.addEventListener('click', () =>
-          vscode.postMessage({ type: 'compareVersion', at: previous.at, with: v.at }));
-        li.appendChild(step);
-      }
+      const diff = document.createElement('button');
+      diff.className = 'secondary';
+      diff.textContent = 'Diff';
+      diff.title = 'Compare this version with the current file, in its own tab';
+      diff.addEventListener('click', () => vscode.postMessage({ type: 'diffVersion', at: v.at }));
+      li.appendChild(diff);
 
       const restore = document.createElement('button');
       restore.className = 'secondary';
       restore.textContent = 'Restore';
-      restore.addEventListener('click', () => vscode.postMessage({ type: 'restoreVersion', at: v.at }));
+      restore.title = 'Show what would change, then restore';
+      restore.addEventListener('click', () =>
+        vscode.postMessage({ type: 'restoreVersion', at: v.at }));
       li.appendChild(restore);
 
       ul.appendChild(li);
-    });
+    }
     box.appendChild(ul);
 
     const clear = document.createElement('div');

@@ -24,9 +24,14 @@ All notable changes to Shush are documented here. This project follows
   file or the previous version as a **masked key-level diff** (added / removed /
   changed keys, before and after, revealed one at a time), or restores behind a
   confirmation.
-  - The diff tab carries **Old / New dropdowns** (plus a swap), so which version
-    is being compared against which is stated rather than implied, and either
+  - Each version in the list has exactly two actions, **Diff** and **Restore**.
+    Restore opens the diff first, so what's about to be overwritten is visible
+    before the confirmation rather than taken on trust.
+  - The diff tab carries **From / To dropdowns** (plus a swap and a restore), so
+    the direction of the comparison is stated rather than implied, and either
     side can be repicked in place — any version, or the current file.
+  - The toolbar and the version list are pinned to the top of the editor, so
+    History stays reachable when scrolled down a long file.
   - **Why a custom diff and not VS Code's diff editor:** the diff editor is a
     plain text editor, so it would render both versions of every secret in the
     clear. A key-level comparison is also the right unit for a secrets file —

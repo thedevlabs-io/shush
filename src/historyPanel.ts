@@ -27,8 +27,12 @@ export interface PanelContent {
   after: string;
 }
 
-/** Called when the user repicks either side. Values match `VersionOption.value`. */
-export type SelectHandler = (before: string, after: string) => void;
+export interface PanelHandlers {
+  /** Repick either side. Values match `VersionOption.value`. */
+  onSelect(before: string, after: string): void;
+  /** Restore the version currently on the Old side. */
+  onRestore(at: number): void;
+}
 
 /**
  * One panel per file, reused. Opening a second version for the same file
@@ -36,9 +40,9 @@ export type SelectHandler = (before: string, after: string) => void;
  */
 export class HistoryPanel {
   private static readonly panels = new Map<string, vscode.WebviewPanel>();
-  private static readonly handlers = new Map<string, SelectHandler>();
+  private static readonly handlers = new Map<string, PanelHandlers>();
 
-  static show(key: string, content: PanelContent, onSelect: SelectHandler): void {
+  static show(key: string, content: PanelContent, handlers: PanelHandlers): void {
     const title = content.single
       ? `${content.fileName} @ ${content.afterLabel}`
       : `${content.fileName} — changes`;
@@ -56,18 +60,20 @@ export class HistoryPanel {
       );
       HistoryPanel.panels.set(key, panel);
       panel.onDidDispose(() => HistoryPanel.panels.delete(key));
-      // Registered once per panel; the handler is re-read from the map on each
-      // message so a later show() can swap in a fresh closure.
+      // Registered once, but reads the handler from the map on each message so a
+      // later show() can swap in a fresh closure.
       panel.webview.onDidReceiveMessage((msg) => {
+        const current = HistoryPanel.handlers.get(key);
         if (msg?.type === "select") {
-          HistoryPanel.handlers.get(key)?.(String(msg.before), String(msg.after));
+          current?.onSelect(String(msg.before), String(msg.after));
+        } else if (msg?.type === "restore") {
+          current?.onRestore(Number(msg.at));
         }
       });
     }
-    HistoryPanel.handlers.set(key, onSelect);
+    HistoryPanel.handlers.set(key, handlers);
 
-    // Re-rendering wholesale also re-masks every value, which is the behaviour
-    // we want when the user switches to a different pair of versions.
+    // Re-rendering wholesale also re-masks every value.
     panel.webview.html = HistoryPanel.html(content);
   }
 
@@ -88,8 +94,7 @@ export class HistoryPanel {
       `script-src 'nonce-${nonce}'`,
     ].join("; ");
 
-    // Values reach the page as JSON in a script block, never interpolated into
-    // markup, and every cell is written with textContent.
+    // Values reach the page as JSON in a script block, never interpolated into markup.
     const data = JSON.stringify(content).replace(/</g, "\\u003c");
     const summary = describe(summarize(content.rows));
 
@@ -139,6 +144,8 @@ export class HistoryPanel {
                    border-radius: 4px; padding: 3px 6px; }
   .picker .arrow { opacity: .6; }
   .picker .swap { margin-left: 4px; }
+  .picker .restore { margin-left: auto; color: var(--vscode-button-foreground);
+                     background: var(--vscode-button-background); }
 </style>
 </head>
 <body>
@@ -149,12 +156,13 @@ export class HistoryPanel {
     <button id="revealAll">Reveal all</button>
   </div>
   <div class="picker">
-    <label for="before">Old</label>
+    <label for="before">From</label>
     <select id="before"></select>
     <span class="arrow">→</span>
-    <label for="after">New</label>
+    <label for="after">To</label>
     <select id="after"></select>
     <button class="swap" id="swap" title="Swap the two sides">⇄ Swap</button>
+    <button class="restore" id="restore">Restore the “From” version</button>
   </div>
   <table id="table"></table>
   <div class="empty" id="empty" style="display:none"></div>
@@ -278,10 +286,16 @@ export class HistoryPanel {
     });
   }
 
-  // Only the "old" side may be "none" — that's what turns the diff into a
-  // single-version view. The "new" side is always a real version.
+  // Only "From" may be "none" — that is what turns the diff into a single-version view.
   fillPicker('before', content.before, true);
   fillPicker('after', content.after, false);
+
+  const restorable = /^\\d+$/.test(content.before) ? content.before : null;
+  const restoreBtn = document.getElementById('restore');
+  restoreBtn.style.display = restorable ? '' : 'none';
+  restoreBtn.addEventListener('click', () => {
+    if (restorable) { api.postMessage({ type: 'restore', at: Number(restorable) }); }
+  });
 
   document.getElementById('swap').addEventListener('click', () => {
     const before = document.getElementById('before').value;
