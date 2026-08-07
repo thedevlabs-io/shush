@@ -3,7 +3,7 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { HistoryStore, type HistorySettings, type SecretStore } from "./history";
+import { HistoryStore, type HistorySettings, type SecretStore } from "../src/history/store";
 
 class FakeSecrets implements SecretStore {
   readonly map = new Map<string, string>();

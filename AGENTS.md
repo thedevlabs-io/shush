@@ -9,18 +9,38 @@ secrets never render on screen during calls or screen shares.
 
 ## Architecture
 
-Three source files, all in `src/`, bundled by esbuild into a single CJS file.
+Bundled by esbuild into a single CJS file. Tests live in `test/`, never beside the
+source. Layers are one-directional — `core/` holds parsing and comparison logic,
+`history/` the opt-in snapshot store, `ui/` everything the user sees:
+
+```
+src/
+  core/
+    glob.ts             minimal in-house glob matcher (**, *, ?) and basename
+    model.ts            pure helpers: key validation, value sanitising, snapshot ids
+    diff.ts             key-level comparison of two versions
+    secretsDocument.ts  parsing/editing model — env lines and the JSON tree
+  history/
+    store.ts            snapshots in SecretStorage, queued writes, retention
+    capture.ts          snapshot-on-save, warning once if the keychain refuses
+  ui/
+    redactedEditor.ts     the CustomTextEditor: wiring and message routing
+    redactedEditorHtml.ts its markup/styles/script
+    addValue.ts           the "add a value" flow (name, then a password box)
+    versionTab.ts         opening a version or a diff, and restoring one
+    historyPanel.ts       the tab that renders a version or a diff
+  extension.ts        activation, pattern matching, tab swapping, commands
+```
+
+Keep files small and single-purpose. Webview markup belongs in its own `*Html.ts`
+module, never inline in the file that owns the panel's behaviour.
+
+Notes on the pieces that carry real constraints:
 
 - **`extension.ts`** — activation and the pattern-matching orchestration layer.
-  Registers the custom editor and three commands (`shush.protectActiveFile`,
-  `shush.openConfig`, `shush.openAsText`). Owns the `ConfigStore` (merges
-  `shush.patterns` from settings with `patterns` arrays read from each
-  workspace folder's `.shushrc.json`) and the tab-swap logic.
-- **`redactedEditor.ts`** — the `RedactedEnvEditorProvider`
-  (`CustomTextEditorProvider`). Parses the document, renders a webview of
-  key/value rows, and writes edits back via `WorkspaceEdit`. Contains the full
-  webview HTML/CSS/JS inline in `html()`.
-- **`history.ts`** — `HistoryStore`, the opt-in snapshot store. Snapshots go into
+  Owns the `ConfigStore` (merges `shush.patterns` from settings with `patterns`
+  arrays read from each workspace folder's `.shushrc.json`) and the tab-swap logic.
+- **`history/store.ts`** — `HistoryStore`, the opt-in snapshot store. Snapshots go into
   `context.secrets` (`SecretStorage`), one JSON bucket per file keyed by a sha256
   of the URI, plus an index key so "clear all" can find every bucket. **Never
   write history to disk or into the workspace** — that would put secrets

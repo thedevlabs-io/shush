@@ -3,7 +3,7 @@
 
 import * as vscode from "vscode";
 import { randomBytes } from "node:crypto";
-import { describe, summarize, type DiffRow } from "./diff";
+import { describe, summarize, type DiffRow } from "../core/diff";
 
 /** A choice in the Old/New dropdowns. `value` is "none", "current", or a timestamp. */
 export interface VersionOption {
