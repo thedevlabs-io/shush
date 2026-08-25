@@ -3,6 +3,34 @@
 All notable changes to Shush are documented here. This project follows
 [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] — 2026-08-25
+
+### Added
+
+- **Find in the redacted editor** (`Cmd+F` / `Ctrl+F`, or the new **Find**
+  toolbar button). A filter bar narrows the rows as you type, with a
+  **Both / Names / Values** scope switch and a **Match case** toggle; `Esc`
+  closes it.
+  - **Why:** VS Code's own find widget is useless here. Values render in
+    password inputs, so the browser has no text for it to match — the one search
+    a secrets file actually needs ("which key holds this token?") was impossible
+    without opening the file as plain text.
+  - Matching a value never reveals it: hits are filtered into view still masked
+    and only the key name is highlighted. In JSON, a matching leaf keeps its
+    ancestor keys for context and a matching object keeps its subtree.
+  - **The query is treated as a secret as well.** In `Both` / `Values` scope the
+    filter field is a password field with its own reveal toggle, and an
+    unmatched query is never echoed into the row area — a pasted token that
+    matches nothing would otherwise render in the clear, which is the exact
+    failure this extension exists to prevent.
+  - Filtering commits an in-progress value edit before rebuilding the rows, so
+    typing a new secret and then filtering or pressing `Esc` cannot discard it.
+  - Scope and case sensitivity persist per editor via the webview's own state.
+  - **Impact:** additive, and inert until the bar is opened. The filter lives in
+    the new `src/search.ts` (pure and unit-tested); the webview embeds that
+    function's source rather than keeping a second copy, so the tested code and
+    the running code cannot drift.
+
 ## [0.3.0] — 2026-08-07
 
 ### Added
