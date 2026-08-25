@@ -13,6 +13,7 @@ import {
 import { randomBytes } from "node:crypto";
 import { diffEntries, type DiffRow, type Entry } from "./diff";
 import { HistoryPanel } from "./historyPanel";
+import { filterRows } from "./search";
 
 type Format = "env" | "json";
 
@@ -753,6 +754,18 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
          padding: 4px 6px; display: inline-flex; align-items: center; }
   .eye:hover { opacity: 1; }
   .empty { padding: 24px 14px; opacity: .7; }
+  .find { display: none; align-items: center; gap: 8px; padding: 8px 14px;
+          background: var(--vscode-editor-background);
+          border-bottom: 1px solid var(--vscode-panel-border); font-size: 12px; }
+  .find input[type=search] { flex: 1; min-width: 120px; }
+  .find .scope { display: inline-flex; gap: 2px; }
+  .find .scope button { padding: 3px 8px; font-size: 12px; }
+  .find .scope button[aria-pressed=true] { color: var(--vscode-button-foreground);
+                                           background: var(--vscode-button-background); }
+  .find label { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; opacity: .85; }
+  .find .count { white-space: nowrap; opacity: .7; min-width: 70px; text-align: right; }
+  mark { background: var(--vscode-editor-findMatchHighlightBackground, rgba(234,92,0,.33));
+         color: inherit; border-radius: 2px; }
   .versions { display: none; border-bottom: 1px solid var(--vscode-panel-border);
               max-height: 40vh; overflow-y: auto; background: var(--vscode-editor-background); }
   .versions ul { list-style: none; margin: 0; padding: 4px 0; }
@@ -766,9 +779,23 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
   <div class="bar">
     <span class="name" id="name">secrets</span>
     <button class="secondary" id="add">+ Add value</button>
+    <button class="secondary" id="findBtn" title="Find (Cmd/Ctrl+F)">Find</button>
     <button class="secondary" id="historyBtn">History</button>
     <button class="secondary" id="toggleAll">Reveal all</button>
     <button class="secondary" id="openText">Open as text</button>
+  </div>
+  <div class="find" id="find">
+    <input type="password" id="q" placeholder="Filter by name or value…" spellcheck="false"
+           autocomplete="off" aria-label="Filter rows">
+    <button class="eye" id="qEye" title="Show / hide what you typed"></button>
+    <span class="scope" id="scope">
+      <button class="secondary" data-scope="both" aria-pressed="true">Both</button>
+      <button class="secondary" data-scope="keys" aria-pressed="false">Names</button>
+      <button class="secondary" data-scope="values" aria-pressed="false">Values</button>
+    </span>
+    <label><input type="checkbox" id="caseSensitive"> Match case</label>
+    <span class="count" id="count"></span>
+    <button class="secondary" id="findClose" title="Close (Esc)">✕</button>
   </div>
   <div class="versions" id="versions"></div>
   </div>
@@ -779,15 +806,74 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
   const vscode = acquireVsCodeApi();
   let allRevealed = false;
   let historyEnabled = false;
+  let allRows = [];
+  let query = '';
+  let scope = 'both';
+  let caseSensitive = false;
+
+  // The extension's own filter, embedded verbatim so the tested implementation
+  // and the one the webview runs cannot drift apart. Bound to a const because the
+  // production build minifies the declaration's name away.
+  const filterRows = ${filterRows.toString()};
+
+  const saved = vscode.getState() || {};
+  if (saved.scope === 'keys' || saved.scope === 'values' || saved.scope === 'both') {
+    scope = saved.scope;
+  }
+  caseSensitive = !!saved.caseSensitive;
+
+  function saveSettings() {
+    vscode.setState({ scope: scope, caseSensitive: caseSensitive });
+  }
 
   // Feather icons (MIT) — inline so they render identically on every platform.
   const EYE = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>';
   const EYE_OFF = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
 
-  function render(rows) {
+  /** Key text with the matched span marked. Values are never highlighted — they stay masked. */
+  function labelInto(td, text) {
+    const hay = caseSensitive ? text : text.toLowerCase();
+    const q = query.trim();
+    const needle = caseSensitive ? q : q.toLowerCase();
+    let at = needle && scope !== 'values' ? hay.indexOf(needle) : -1;
+    if (at === -1) {
+      td.appendChild(document.createTextNode(text));
+      return;
+    }
+    let from = 0;
+    while (at !== -1) {
+      td.appendChild(document.createTextNode(text.slice(from, at)));
+      const mark = document.createElement('mark');
+      mark.textContent = text.slice(at, at + needle.length);
+      td.appendChild(mark);
+      from = at + needle.length;
+      at = hay.indexOf(needle, from);
+    }
+    td.appendChild(document.createTextNode(text.slice(from)));
+  }
+
+  function render() {
     const table = document.getElementById('rows');
+    // Rebuilding drops the inputs, and a removed input never fires 'change' — commit
+    // whatever is being typed first, or filtering would silently discard the edit.
+    const active = document.activeElement;
+    if (active && active.tagName === 'INPUT' && active.closest('#rows')) {
+      active.blur();
+    }
     table.innerHTML = '';
-    document.getElementById('empty').style.display = rows.length ? 'none' : 'block';
+    const result = filterRows(allRows, query, scope, caseSensitive);
+    const rows = allRows.filter((_, i) => result.keep[i]);
+
+    const empty = document.getElementById('empty');
+    empty.style.display = rows.length ? 'none' : 'block';
+    // Never echo the query: in Values scope it is a secret the user pasted in.
+    empty.textContent = allRows.length ? 'No rows match your filter.' : 'No values found to redact.';
+
+    const count = document.getElementById('count');
+    count.textContent = query.trim()
+      ? result.matches + (result.matches === 1 ? ' match' : ' matches')
+      : '';
+
     for (const r of rows) {
       const indent = (r.depth || 0) * 16;
 
@@ -798,7 +884,7 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
         td.colSpan = 3;
         td.style.paddingLeft = (14 + indent) + 'px';
         td.innerHTML = '<span class="twisty">▸</span>';
-        td.appendChild(document.createTextNode(r.label));
+        labelInto(td, r.label);
         tr.appendChild(td);
         table.appendChild(tr);
         continue;
@@ -809,7 +895,7 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
       const kd = document.createElement('td');
       kd.className = 'key';
       kd.style.paddingLeft = (14 + indent) + 'px';
-      kd.textContent = r.label;
+      labelInto(kd, r.label);
       tr.appendChild(kd);
 
       const vd = document.createElement('td');
@@ -912,7 +998,8 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
       const note = document.getElementById('note');
       if (m.note) { note.textContent = m.note; note.style.display = 'block'; }
       else { note.style.display = 'none'; }
-      render(m.rows);
+      allRows = m.rows || [];
+      render();
     } else if (m.type === 'versions') {
       renderVersions(m.versions || []);
     }
@@ -942,6 +1029,103 @@ export class RedactedEnvEditorProvider implements vscode.CustomTextEditorProvide
 
   document.getElementById('openText').addEventListener('click', () => {
     vscode.postMessage({ type: 'openText' });
+  });
+
+  // ---- find bar ----------------------------------------------------------
+
+  const findBar = document.getElementById('find');
+  const qInput = document.getElementById('q');
+  const caseBox = document.getElementById('caseSensitive');
+
+  function paintScope() {
+    document.querySelectorAll('#scope button').forEach((b) => {
+      b.setAttribute('aria-pressed', String(b.dataset.scope === scope));
+    });
+  }
+
+  const qEye = document.getElementById('qEye');
+  let qRevealed = false;
+
+  /** The query is a secret whenever it's matched against values — mask it like one. */
+  function paintQueryMask() {
+    const secret = scope !== 'keys';
+    qInput.type = secret && !qRevealed ? 'password' : 'text';
+    qEye.style.display = secret ? 'inline-flex' : 'none';
+    qEye.innerHTML = qInput.type === 'password' ? EYE : EYE_OFF;
+  }
+
+  qEye.addEventListener('click', () => {
+    qRevealed = !qRevealed;
+    paintQueryMask();
+    qInput.focus();
+  });
+
+  function openFind() {
+    findBar.style.display = 'flex';
+    qInput.focus();
+    qInput.select();
+  }
+
+  function closeFind() {
+    findBar.style.display = 'none';
+    qInput.value = '';
+    query = '';
+    qRevealed = false;
+    paintQueryMask();
+    render();
+  }
+
+  qInput.value = query;
+  caseBox.checked = caseSensitive;
+  paintScope();
+  paintQueryMask();
+
+  qInput.addEventListener('input', () => {
+    query = qInput.value;
+    render();
+  });
+
+  caseBox.addEventListener('change', () => {
+    caseSensitive = caseBox.checked;
+    saveSettings();
+    render();
+  });
+
+  document.querySelectorAll('#scope button').forEach((b) => {
+    b.addEventListener('click', () => {
+      scope = b.dataset.scope;
+      qRevealed = false;
+      paintScope();
+      paintQueryMask();
+      saveSettings();
+      render();
+      qInput.focus();
+    });
+  });
+
+  document.getElementById('findBtn').addEventListener('click', () => {
+    findBar.style.display === 'flex' ? closeFind() : openFind();
+  });
+  document.getElementById('findClose').addEventListener('click', closeFind);
+
+  // VS Code's own find widget is off for this panel, so Cmd/Ctrl+F is ours to take —
+  // and the native one could not see values inside password fields anyway.
+  const isMac = navigator.platform.toLowerCase().indexOf('mac') === 0;
+
+  window.addEventListener('keydown', (e) => {
+    if (typeof e.key !== 'string') {
+      return;
+    }
+    // On macOS, Ctrl+F is "move cursor forward" inside a field — leave it alone there.
+    const editing = document.activeElement && document.activeElement.closest('#rows');
+    const claimed = e.metaKey || (e.ctrlKey && !(isMac && editing));
+    if (claimed && !e.altKey && e.key.toLowerCase() === 'f') {
+      e.preventDefault();
+      openFind();
+    } else if (e.key === 'Escape' && findBar.style.display === 'flex') {
+      e.preventDefault();
+      closeFind();
+    }
   });
 
   vscode.postMessage({ type: 'ready' });

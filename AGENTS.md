@@ -37,6 +37,13 @@ Three source files, all in `src/`, bundled by esbuild into a single CJS file.
 - **`model.ts`** — pure helpers (env key validation, value sanitising, snapshot
   id/pruning) with no `vscode` import, so `npm test` can bundle and run them
   under `node:test`.
+- **`search.ts`** — the find bar's row filter (`filterRows`): matches a query
+  against keys, values or both, keeps a matching leaf's ancestor containers and a
+  matching container's subtree. Pure and `vscode`-free so it is unit-tested, and
+  the webview embeds `filterRows.toString()` instead of holding a second copy —
+  which is why the function must stay self-contained (no imports, no outside
+  references) and why `html()` binds it to a `const` (the minified build renames
+  the declaration).
 - **`glob.ts`** — a hand-rolled minimal glob matcher (`**`, `*`, `?` only) and
   `basename`. Shared so built-in and user patterns match identically. No
   external glob dependency.
@@ -70,6 +77,11 @@ guards against re-entrant swaps.
   restores the original value's type (number/boolean/null) and `detectIndent()`
   preserves the file's indentation style. Unparseable JSON is masked as one
   `__raw__` block and is **not editable**.
+
+Find (`Cmd/Ctrl+F`) filters entirely inside the webview — the rows are already
+there, and matching a value never posts it back or unmasks it. Only the key name
+is highlighted; the value stays a password field. Scope and case sensitivity are
+kept in the webview's own `setState`.
 
 Adding a value uses VS Code input boxes rather than webview fields so the value
 prompt can be `password: true`. Env values are run through `sanitizeEnvValue` on

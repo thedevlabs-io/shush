@@ -22,6 +22,7 @@ DATABASE_URL   ••••••••••••••  👁
 - **👁 per row** — reveal/hide a single value.
 - **Reveal all / Hide all** — toggle every value at once.
 - **+ Add value** — add a new variable without leaving the redacted editor.
+- **Find (Cmd/Ctrl+F)** — filter rows by name, value, or both.
 - **Open as text** — reopen in the normal text editor when you need to.
 
 Values are editable in place; edits are written back to the file. JSON files are
@@ -59,6 +60,29 @@ startup (and watches it for changes) and protects those files automatically.
 > so there is a brief moment where VS Code may paint the raw file before the swap.
 > This is a VS Code limitation — custom-editor file associations can't be changed
 > at runtime. Keep true secrets in `.env` / `.dev.vars` where possible.
+
+## Finding a value
+
+`Cmd+F` / `Ctrl+F` (or the **Find** button) opens a filter bar above the rows.
+Typing narrows the list as you type; `Esc` closes it and restores every row.
+
+- **Both / Names / Values** picks what the query is matched against. `Values`
+  searches the secrets themselves, which VS Code's own find can never do — the
+  values live in password fields, so the built-in widget has nothing to read.
+- **Match case** toggles case sensitivity.
+- Both settings are remembered per editor.
+
+Searching for a token in front of other people is safe, in both directions:
+
+- **What you type is masked too.** In `Both` or `Values` scope the query is
+  itself a secret you pasted in, so the filter field is a password field with its
+  own 👁 toggle. In `Names` scope it's shown plainly. No unmatched query is ever
+  echoed back into the row area.
+- **A matched value is not revealed.** The hit is filtered into view still
+  masked; only the key name is highlighted.
+
+In a JSON file a matching leaf keeps its parent keys visible for context, and a
+matching object keeps its whole subtree.
 
 ## Adding values
 
